@@ -109,6 +109,13 @@ pub struct Game {
     /// is stored under.
     pub join: String,
     pub confidence: u8,
+    /// Whether a player is shown the answer as soon as they have sent
+    /// their second range, the way Quantified Intuitions does it, rather
+    /// than waiting for the host to reveal. Off unless the host asks: one
+    /// person learning the answer early, in a room where everybody can see
+    /// everybody, gives it away.
+    #[serde(default)]
+    pub tell_on_send: bool,
     pub players: Vec<Player>,
     /// Oldest first; the last one is the question the room is on.
     pub rounds: Vec<Round>,
@@ -143,6 +150,7 @@ impl Game {
         Game {
             join: rooms::key::new(),
             confidence: 90,
+            tell_on_send: false,
             players: Vec::new(),
             rounds: Vec::new(),
             last_seen: now,
@@ -186,6 +194,10 @@ impl Game {
         });
         self.last_seen = now;
         Ok(key)
+    }
+
+    pub fn set_tell_on_send(&mut self, on: bool) {
+        self.tell_on_send = on;
     }
 
     pub fn set_confidence(&mut self, confidence: u8) -> Result<(), &'static str> {
@@ -1040,6 +1052,16 @@ mod tests {
         let round = game.round().unwrap();
         assert!(round.stats(&game.players, Pass::First).is_none());
         assert!(round.standing_stats(&game.players).is_none());
+    }
+
+    /// Telling a player the answer early is a setting, and the default is
+    /// not to.
+    #[test]
+    fn nobody_is_told_the_answer_early_unless_the_host_turns_it_on() {
+        let mut game = Game::new(1000);
+        assert!(!game.tell_on_send);
+        game.set_tell_on_send(true);
+        assert!(game.tell_on_send);
     }
 
     #[test]

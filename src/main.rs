@@ -92,6 +92,11 @@ struct Confidence {
 }
 
 #[derive(Deserialize)]
+struct Switch {
+    on: bool,
+}
+
+#[derive(Deserialize)]
 struct Named {
     name: String,
 }
@@ -170,6 +175,20 @@ async fn set_confidence(
 ) -> Response {
     act(&rooms, &key, |game, _| {
         game.set_confidence(level.confidence)
+    })
+    .await
+}
+
+/// Whether a player is told the answer as soon as they send their second
+/// range, rather than waiting for the reveal.
+async fn set_tell_on_send(
+    State(rooms): State<Shared>,
+    Path(key): Path<String>,
+    Json(switch): Json<Switch>,
+) -> Response {
+    act(&rooms, &key, |game, _| {
+        game.set_tell_on_send(switch.on);
+        Ok(())
     })
     .await
 }
@@ -328,6 +347,7 @@ fn router(rooms: Shared) -> Router {
         .route("/api/h/{key}/answer", put(set_answer))
         .route("/api/h/{key}/reveal", post(reveal))
         .route("/api/h/{key}/confidence", put(set_confidence))
+        .route("/api/h/{key}/tell-on-send", put(set_tell_on_send))
         .route("/api/j/{key}", get(whose).post(join))
         .route("/api/p/{key}", get(player_state))
         .route("/api/p/{key}/events", get(player_events))
@@ -542,6 +562,42 @@ mod tests {
         assert_eq!(mine["mine_changed"]["after"]["low"], 1000000.0);
         assert_eq!(mine["hit"], true);
         assert_eq!(mine["hit_before"], false);
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn the_room_can_be_told_the_answer_on_sending() {
+        let (app, path) = app("tell");
+        let (host, player) = ready(&app).await;
+        ok(
+            &app,
+            "PUT",
+            &format!("/api/h/{host}/tell-on-send"),
+            Some(json!({"on": true})),
+        )
+        .await;
+        ok(
+            &app,
+            "PUT",
+            &format!("/api/h/{host}/stage"),
+            Some(json!({"stage": "second"})),
+        )
+        .await;
+
+        let before = ok(&app, "GET", &format!("/api/p/{player}"), None).await;
+        assert!(before["view"]["round"]["answer"].is_null(), "not yet");
+
+        let view = ok(
+            &app,
+            "PUT",
+            &format!("/api/p/{player}/bounds"),
+            Some(json!({"low": 1000000, "high": 2000000})),
+        )
+        .await["view"]
+            .clone();
+        assert_eq!(view["round"]["answer"], 1234567.0, "told on sending");
+        assert!(view["standing"].is_null(), "and nothing else");
 
         let _ = std::fs::remove_file(&path);
     }

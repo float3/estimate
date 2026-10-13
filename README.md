@@ -50,6 +50,14 @@ point, and average how much closer everybody else's midpoint got to it
 between the two passes. Their own movement is left out of their own
 score, so nobody scores by moving.
 
+A room can ask to be told the answer the moment a player sends their
+second range, the way [Quantified
+Intuitions](https://quantifiedintuitions.org) does it, instead of waiting
+for the reveal. It is off unless the host turns it on: one person learning
+the answer early, in a room where everybody can see everybody, gives it
+away. Even with it on, a player gets the answer and their own hit, and
+nothing about anybody else until the reveal.
+
 Nothing of the first pass is shown to players during the discussion. The
 host sees it and can read out as much of it as they like; putting the
 spread on everybody's phone would anchor the second answer to it.

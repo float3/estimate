@@ -10,6 +10,28 @@
   font-size: 0.85rem;
 }
 
+/* A setting the host can turn on, next to the confidence chips. */
+.switch {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  margin-top: 16px;
+  font-size: 0.9rem;
+  font-weight: 400;
+  letter-spacing: 0;
+  color: var(--body);
+  cursor: pointer;
+}
+
+.switch input {
+  width: 22px;
+  height: 22px;
+  min-height: 0;
+  margin: 1px 0 0;
+  flex: none;
+  accent-color: var(--ink);
+}
+
 /* The two bounds stay side by side even on the narrowest phone. They are
  * one answer, and splitting them over two rows reads worse than setting
  * them small. */
