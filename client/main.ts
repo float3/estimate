@@ -431,10 +431,9 @@ function host(key: string): void {
         </tr>`,
         )
         .join("")}</tbody></table></div>
-      <p class="note">“Tighter” counts the questions where the range came in
-        narrower than the room's middling one; a perfect hit rate is easy to get
-        by answering “nought to a billion”. “Changed” counts the questions where
-        the discussion moved them.</p>`,
+      <p class="note">“Tighter” counts the questions where the range was
+        narrower than the room's median range. “Changed” counts the questions
+        where the second range differed from the first.</p>`,
     );
   }
 
