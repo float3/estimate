@@ -345,10 +345,10 @@ async fn main() {
     let rooms: Shared = Rooms::load(PathBuf::from(state), MAX_ROOMS);
     tokio::spawn(rooms.clone().sweep(SWEEP));
 
-    let listener = tokio::net::TcpListener::bind(&addr)
-        .await
-        .unwrap_or_else(|e| panic!("cannot bind {addr}: {e}"));
-    println!("listening on http://{addr}");
+    // Under systemd the port is held by a socket unit and passed in, so
+    // the service itself runs with no network of its own.
+    let listener = rooms::listen(&addr).await;
+    println!("{}", rooms::where_it_listens(&listener));
     axum::serve(listener, router(rooms))
         .await
         .expect("the server stopped");
