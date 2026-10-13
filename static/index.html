@@ -23,13 +23,14 @@
     <p class="eyebrow">For a room of people</p>
     <h1>How wide is your range?</h1>
     <p class="lead">You ask the question. Everyone gives the range they are
-      ninety per cent sure the answer falls in, from their own phone. Then the
-      room talks about it and everyone answers again — and you see who was
-      moved, which way, and whether it helped.</p>
+      ninety per cent sure the answer falls in, from their own phone. The room
+      then discusses it and answers again, and you see who changed their
+      range, in which direction, and whether the second answers were closer
+      to the truth.</p>
     <div class="actions"><button class="button primary" id="open">Open a room</button></div>
-    <p class="note" id="start-note">Nothing to install and nobody signs up. The
-      link to the room is the only key there is, so keep the host link: it is the
-      way back in.</p>
+    <p class="note" id="start-note">There is nothing to install and nobody
+      signs up. The link is the only key, so keep the host link: it is the only
+      way back into the room.</p>
     <div class="prose">
       <h2>How it goes</h2>
       <ol>
@@ -39,10 +40,10 @@
           are there in Munich? When was the first one lit?</li>
         <li>Everyone sends a lower and an upper bound from their phone.</li>
         <li>You stop taking ranges, and the room talks it over.</li>
-        <li>You ask for a second range. Everyone's phone starts from what they
-          said the first time, so leaving it alone is an answer too.</li>
-        <li>You reveal. Everybody sees the answer, the room's numbers, and how
-          far the discussion moved them.</li>
+        <li>You ask for a second range. Each phone starts from that player's
+          first answer, so submitting it unchanged counts as an answer.</li>
+        <li>You reveal. Everybody sees the answer, the room's numbers, and
+          how far the discussion moved them.</li>
       </ol>
       <h2>Why ranges, and why twice</h2>
       <p>A single guess is almost always wrong, and knowing it is wrong tells
@@ -50,9 +51,9 @@
         ninety per cent sure, then nine of your ten ranges ought to contain the
         answer. Too few and you are overconfident, which is the usual case. Ten
         out of ten and your ranges are wider than they need to be.</p>
-      <p>Asking twice is the other half. The gap between your two ranges is how
-        much the room moved you, and the room can see whether all that moving
-        took it towards the answer or away from it.</p>
+      <p>Asking twice measures something else. The difference between your two
+        ranges is how much the discussion moved you, and the room can see
+        whether the second answers were closer to the truth than the first.</p>
     </div>
   </section>
 
@@ -119,8 +120,8 @@
     <form class="panel" id="name-form">
       <label for="name">Your name</label>
       <input id="name" maxlength="32" required autocomplete="nickname" autocapitalize="words">
-      <p class="note">The host sees this beside your ranges. Everybody in the
-        room will see it after each reveal.</p>
+      <p class="note">The host sees this beside your ranges, and everybody in
+        the room sees it after each reveal.</p>
       <div class="actions"><button class="button primary" type="submit">Join</button></div>
     </form>
     <p class="note" id="join-count"></p>

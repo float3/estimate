@@ -6,29 +6,29 @@ The estimation game for a room of people, at
 [estimate.rationality-munich.com](https://estimate.rationality-munich.com).
 
 You open a room and put the join link on the wall. Everyone scans it and
-gives a name. You ask a question with a number for an answer; everyone
-sends the range they are ninety per cent sure it falls in. You see what the
-room thinks — the median bounds, the average bounds, how low and how high
-anyone went, the widest range and the tightest — and once you type the
-answer in, how many of the ranges contained it.
+gives a name. You ask a question with a number for an answer, and everyone
+sends the range they are ninety per cent sure it falls in. You get the
+median bounds, the average bounds, the lowest and highest anyone went, the
+widest range and the narrowest, and, once you enter the answer, how many
+of the ranges contained it.
 
-Then the room talks about it and you ask for a second range. Everyone's
-phone starts from what they said the first time, so leaving it alone is an
-answer too. The second pass is the interesting one: everybody sees how far
-they were moved, and the room sees whether all that moving took it towards
-the answer or away from it.
+The room then discusses the question and you ask for a second range. Each
+phone starts from that player's first answer, so submitting it unchanged
+counts as an answer. The second pass is what makes the first one worth
+collecting: everybody sees how far the discussion moved them, and the room
+sees whether the second answers were closer to the truth.
 
 Built on [rooms](https://github.com/float3/rooms).
 
 ## Why ranges
 
-A single guess is almost always wrong, and knowing it was wrong tells you
-nothing. A range is a claim about how much you know: at ninety per cent,
-nine in ten of your ranges ought to contain the answer. Fewer than that and
-you are overconfident, which is the usual result. Ten out of ten and your
-ranges are wider than they need to be — which is why the scoreboard counts
-how often somebody came in tighter than the room as well as how often they
-were right.
+A single guess is almost always wrong, and knowing that it was wrong tells
+you nothing. A range is a claim about how much you know: at ninety per
+cent, nine in ten of your ranges should contain the answer. Fewer than that
+means you are overconfident, which is the usual result. Ten out of ten
+means your ranges are wider than they need to be. The scoreboard therefore
+counts how often somebody was narrower than the room as well as how often
+they were right.
 
 ## The two passes
 
@@ -42,11 +42,10 @@ A question goes through four stages, and the host moves it on:
 | Revealed | the answer, the room's numbers, and what the discussion did |
 
 The host can go back a stage for somebody who was out of the room, and can
-reveal from any of them — a question the host reveals straight from the
-first pass simply has no second one. What comes out of a two-pass question
-is who changed their range, who narrowed and who widened, how far the
-middle of the room moved, who moved furthest, and how many ranges
-contained the answer before and after.
+reveal from any stage. A question revealed straight from the first pass has
+no second pass. A two-pass question reports who changed their range, who
+narrowed and who widened, how far the median midpoint moved, whose moved
+furthest, and how many ranges contained the answer in each pass.
 
 Nothing of the first pass is shown to players during the discussion. The
 host sees it and can read out as much of it as they like; putting the
@@ -60,15 +59,16 @@ spread on everybody's phone would anchor the second answer to it.
 | `/j/<key>` | joins it. This is the one on the wall. |
 | `/p/<key>` | one player's own, kept by their phone. |
 
-The key in the link is the whole access model: 24 random characters, no
-accounts. Anyone with the host link runs the room. That is the right amount
-of security for a room of people looking at the same wall and no more than
-that — see [rooms](https://github.com/float3/rooms) for what that means.
+The key in the link is the only access control: 24 random characters, and
+no accounts. Anyone with the host link can run the room. That is
+appropriate for a group of people sitting together and not for anything
+else; see [rooms](https://github.com/float3/rooms) for what it does and
+does not protect.
 
-The host sees everything. A player is sent their own two ranges, how many
-people have answered, and nothing else until the host reveals the question
-— not the answer, not anybody else's bounds, not even a tally of their own
-hits, which would say whether their range had contained it.
+The host sees everything. A player is sent their own two ranges and how
+many people have answered. Until the host reveals the question they are
+not sent the answer, anybody else's bounds, or a tally of their own hits,
+which would tell them whether their range had contained it.
 
 ## Running it
 

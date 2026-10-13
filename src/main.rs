@@ -1,13 +1,13 @@
 //! The estimation game for a room of people.
 //!
 //! The host opens a room, puts the join link on the wall, and asks a
-//! question. Everyone's phone shows two fields; the host's screen shows
-//! what the room collectively thinks and, once the answer is in, how many
-//! of the ranges contained it.
+//! question. Each phone shows two fields. The host's screen shows the
+//! room's bounds and, once the answer has been entered, how many of the
+//! ranges contained it.
 //!
-//! Three kinds of link, and the key in each is all the authority there is:
-//! `/h/<key>` runs the room, `/j/<key>` joins it, `/p/<key>` is one
-//! player's own.
+//! There are three kinds of link, and the key in each is the only
+//! authority there is: `/h/<key>` runs the room, `/j/<key>` joins it, and
+//! `/p/<key>` belongs to one player.
 
 mod game;
 mod view;
@@ -34,7 +34,7 @@ const ICON: &str = include_str!("../static/icon.svg");
 const APP_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/app.js"));
 const APP_CSS: &str = include_str!(concat!(env!("OUT_DIR"), "/app.css"));
 
-/// How many rooms at once. A cap because anyone can open one.
+/// How many rooms at once. Limited because anyone can open one.
 const MAX_ROOMS: usize = 2000;
 /// How often to look for rooms nobody has opened in a day.
 const SWEEP: Duration = Duration::from_secs(5 * 60);
@@ -45,11 +45,10 @@ fn refused(message: &str) -> Response {
     http::error(StatusCode::CONFLICT, message)
 }
 
-/// A host action: do the thing to the room, send the host's view back.
+/// Applies a host action to the room and returns the host's view.
 ///
-/// Every host request answers with the whole view rather than with nothing,
-/// so the screen that pressed the button does not have to wait for its own
-/// event stream to catch up.
+/// Every host request answers with the whole view, so the screen that
+/// pressed the button does not wait for its own event stream.
 async fn act(
     rooms: &Rooms<Game>,
     key: &str,
@@ -72,7 +71,7 @@ struct Asked {
     question: String,
     #[serde(default)]
     unit: String,
-    /// The host can know the answer before asking, or look it up after.
+    /// The host can enter the answer before asking or afterwards.
     #[serde(default)]
     answer: Option<f64>,
 }
@@ -175,8 +174,8 @@ async fn set_confidence(
     .await
 }
 
-/// The key a player's link carries is the room's join key, not the room's
-/// own, so the room has to be looked up by it.
+/// A player's link carries the room's join key rather than the room's own
+/// key, so the room has to be found by it.
 async fn room_with_join(rooms: &Rooms<Game>, join: &str) -> Option<String> {
     let join = join.to_string();
     rooms
@@ -202,8 +201,8 @@ async fn join(
     }
 }
 
-/// The name the room already has for this key, so a phone that comes back
-/// to its own link does not have to ask who it is.
+/// How many people are already in, which is what the join page shows
+/// before anyone gives a name.
 async fn whose(State(rooms): State<Shared>, Path(join): Path<String>) -> Response {
     let Some(key) = room_with_join(&rooms, &join).await else {
         return http::gone();
@@ -256,9 +255,8 @@ async fn bounds(
     }
 }
 
-/// A link as a QR code, so the room can join by pointing a camera at the
-/// wall. The page sends the link it wants rather than this guessing at the
-/// host name it is being served under.
+/// A link as a QR code. The page sends the link it wants, rather than
+/// this guessing at the host name it is served under.
 async fn qr_code(body: Bytes) -> Response {
     match std::str::from_utf8(&body) {
         Ok(link) => qr::response(link),
@@ -266,7 +264,7 @@ async fn qr_code(body: Bytes) -> Response {
     }
 }
 
-/// The server's clock, for a phone whose own is off.
+/// The server's clock, which the pages run their countdowns off.
 async fn time() -> Response {
     http::json(format!("{{\"now\":{}}}", now_ms()))
 }
@@ -275,8 +273,8 @@ async fn page() -> Html<&'static str> {
     Html(INDEX)
 }
 
-/// The compiled page. Named without a hash, so it is revalidated rather
-/// than cached: a room is opened once and the page is small.
+/// The compiled page. The name has no hash in it, so it is revalidated
+/// rather than cached; the file is small and a room is opened once.
 async fn script() -> Response {
     (
         [
@@ -312,7 +310,7 @@ async fn icon() -> Response {
 
 fn router(rooms: Shared) -> Router {
     Router::new()
-        // One page, which works out from the path which screen it is.
+        // One page, which picks its screen from the path.
         .route("/", get(page))
         .route("/h/{key}", get(page))
         .route("/j/{key}", get(page))
@@ -362,7 +360,7 @@ mod tests {
     use serde_json::{Value, json};
     use tower::ServiceExt;
 
-    /// A router over its own state file, which the test removes after.
+    /// A router with its own state file, which the test deletes after.
     fn app(name: &str) -> (Router, PathBuf) {
         let path =
             std::env::temp_dir().join(format!("estimate-test-{name}-{}.json", std::process::id()));
@@ -406,7 +404,7 @@ mod tests {
         body
     }
 
-    /// A room with one question open and one player in it.
+    /// A room with one player in it and one question open.
     async fn ready(app: &Router) -> (String, String) {
         let keys = ok(app, "POST", "/api/rooms", None).await;
         let host = keys["host"].as_str().expect("a host key").to_string();

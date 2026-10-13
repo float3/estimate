@@ -1,7 +1,7 @@
 // The estimation game, in a browser.
 //
-// Three screens, one page: the one that opens a room, the host's, and the
-// one almost everybody is looking at, which is a phone.
+// One page with three screens: the one that opens a room, the host's, and
+// the player's, which is almost always a phone.
 
 import {
   api,
@@ -151,7 +151,7 @@ interface PlayerView {
   score: Score | null;
 }
 
-/** The unit of the question on now, appended wherever a number is shown. */
+/** The unit of the current question, appended to every number shown. */
 let unit = "";
 
 const withUnit = (given: number): string =>
@@ -159,7 +159,8 @@ const withUnit = (given: number): string =>
 const range = (low: number, high: number): string =>
   `${num(low)} – ${withUnit(high)}`;
 const ranged = (bound: Bound): string => range(bound.low, bound.high);
-/** A width rather than a pair of bounds, said so nobody reads it as one. */
+/** A width rather than a pair of bounds, labelled so it is not read as
+ *  one. */
 const span = (width: number): string => `${withUnit(width)} apart`;
 
 const STAGES: Record<Stage, string> = {
@@ -211,7 +212,7 @@ function statsHtml(stats: Stats, confidence: number): string {
   return facts(rows);
 }
 
-/** What the discussion did to the room. */
+/** What changed between the two passes. */
 function shiftHtml(shift: Shift): string {
   const rows: [string, string][] = [
     [
@@ -468,8 +469,9 @@ function host(key: string): void {
       text("h-state", STAGES[round.stage]);
       text("h-question", round.question);
       drawWaiting(view, round);
-      // first: talk it over. discussion: ask again, or go back for
-      // whoever missed the first pass. second: back to talking.
+      // In the first pass the host can move to the discussion; in the
+      // discussion, on to the second pass or back to the first; in the
+      // second pass, back to the discussion.
       hide("to-discussion", round.stage !== "first" && round.stage !== "second");
       text(
         "to-discussion",
@@ -551,7 +553,7 @@ function player(key: string): void {
     fail("");
   });
 
-  /** Your own two answers, side by side. */
+  /** This player's two answers and the difference between them. */
   function mineHtml(view: PlayerView): string {
     const change = view.mine_changed;
     if (!change) {
@@ -658,8 +660,8 @@ function player(key: string): void {
       );
     }
 
-    // The second pass starts from what you said the first time, so that
-    // leaving it alone is a real answer and not an empty one.
+    // The second pass starts from the first answer, so that submitting
+    // it unchanged counts as an answer.
     const fillFor = `${round.asked}:${round.stage}`;
     if (taking && filledFor !== fillFor) {
       filledFor = fillFor;

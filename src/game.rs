@@ -1,14 +1,13 @@
-//! One question, everyone's bounds, and what the room as a whole thought.
+//! One question, everyone's bounds, and what the room thought.
 //!
 //! The host asks a question and everybody gives a range they are
-//! `confidence` per cent sure the answer falls in. That is the game: not
-//! being right, but knowing how wide to make the range.
+//! `confidence` per cent sure the answer falls in. The skill the game
+//! tests is choosing the width of that range.
 //!
-//! Then the room talks about it and everybody answers the same question
-//! again. The second set of bounds is the interesting one, because the
-//! difference between the two is how much each person was moved by what
-//! they heard — who narrowed, who widened, who did not budge, and whether
-//! any of it brought the room closer to the answer.
+//! The room then discusses the question and answers it again. The
+//! difference between the two sets of bounds measures how much each
+//! person was moved by the discussion: who narrowed, who widened, who did
+//! not change, and whether the second answers were closer to the truth.
 
 use std::collections::HashMap;
 
@@ -20,19 +19,20 @@ pub const MAX_QUESTION: usize = 300;
 pub const MAX_UNIT: usize = 24;
 pub const MAX_NAME: usize = 32;
 
-/// How sure players are meant to be. Offered rather than free, because the
-/// number only means something if everyone in the room uses the same one.
+/// How sure players are meant to be. A fixed list rather than any number,
+/// because the hit rate only means something if the whole room uses the
+/// same one.
 pub const CONFIDENCES: &[u8] = &[50, 80, 90, 98];
 
-/// Where a question has got to.
+/// How far a question has got.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Stage {
-    /// Taking the first ranges, before anybody has said anything.
+    /// Taking the first ranges, before the discussion.
     First,
-    /// The room is talking it over. Nothing is being taken.
+    /// The room is discussing it. No bounds are being taken.
     Discussion,
-    /// Taking the second ranges, now that it has.
+    /// Taking the second ranges, after the discussion.
     Second,
     /// Everybody can see everything.
     Revealed,
@@ -69,8 +69,8 @@ impl Bound {
         self.high - self.low
     }
 
-    /// The number this range is pointed at, which is what moves when
-    /// somebody changes their mind rather than just their certainty.
+    /// The midpoint of the range. It moves when somebody changes their
+    /// estimate; the width moves when they change how sure they are.
     pub fn middle(&self) -> f64 {
         (self.low + self.high) / 2.0
     }
@@ -89,11 +89,11 @@ pub struct Player {
 #[derive(Serialize, Deserialize)]
 pub struct Round {
     pub question: String,
-    /// What the number is in — "years", "km", "€". Shown beside the fields
-    /// so that half the room does not answer in thousands.
+    /// What the number is in: "years", "km", "€". Shown beside the
+    /// fields, so that half the room does not answer in thousands.
     pub unit: String,
-    /// The truth. The host can type it in before asking or after seeing the
-    /// bounds; until it is revealed, nobody else is sent it.
+    /// The correct answer. The host can enter it before asking or after
+    /// seeing the bounds. Nobody else is sent it before the reveal.
     pub answer: Option<f64>,
     pub stage: Stage,
     pub asked: u64,
@@ -105,8 +105,8 @@ pub struct Round {
 
 #[derive(Serialize, Deserialize)]
 pub struct Game {
-    /// The key players' links carry. The host's own key is the one this
-    /// game is filed under.
+    /// The key in the players' links. The host's key is the one the game
+    /// is stored under.
     pub join: String,
     pub confidence: u8,
     pub players: Vec<Player>,
@@ -120,15 +120,15 @@ impl rooms::Room for Game {
         self.last_seen = now;
     }
 
-    /// A day after anyone last looked. An evening's questions are worth
-    /// keeping for the length of the evening and no longer.
+    /// A day after the room was last opened, which outlasts the evening
+    /// it was used for.
     fn expired(&self, now: u64) -> bool {
         self.last_seen + rooms::DAY_MS < now
     }
 }
 
-/// Trims, collapses the whitespace inside, and cuts to `max` characters
-/// rather than bytes, so that a name in any script survives.
+/// Trims, collapses internal whitespace, and cuts to `max` characters
+/// rather than bytes, so that names in any script survive.
 fn tidy(text: &str, max: usize) -> String {
     text.split_whitespace()
         .collect::<Vec<_>>()
@@ -161,13 +161,13 @@ impl Game {
         self.players.iter().find(|p| p.key == key)
     }
 
-    /// Takes a player's name and gives back the key their phone keeps.
+    /// Takes a player's name and returns the key their phone stores.
     ///
-    /// A name already in the room gives back that player's existing key, so
-    /// that a phone which lost its key — a closed tab, a cleared browser —
-    /// can walk back in. It also means anyone in the room can take over a
-    /// name by typing it exactly. In a room where everybody can already see
-    /// everybody, that is the right trade; nothing here is worth guarding.
+    /// A name already in the room returns that player's existing key, so
+    /// that a phone which lost its key to a closed tab or a cleared
+    /// browser can rejoin. It also lets anyone in the room take over a
+    /// name by typing it exactly. That is an acceptable trade for a group
+    /// of people sitting together, and would not be for anything else.
     pub fn join(&mut self, name: &str, now: u64) -> Result<String, &'static str> {
         let name = tidy(name, MAX_NAME);
         if name.is_empty() {
@@ -231,9 +231,9 @@ impl Game {
     }
 
     /// Moves the question on: to the discussion, to the second ranges, or
-    /// to the reveal. The host can also go back, for somebody who was in
-    /// the loo — but not out of the reveal, because by then everybody has
-    /// seen the answer.
+    /// to the reveal. The host can also go back a stage for somebody who
+    /// missed one. Nothing comes back out of the reveal, because by then
+    /// everybody has seen the answer.
     pub fn move_to(&mut self, stage: Stage) -> Result<(), &'static str> {
         let round = self.round_mut()?;
         if round.stage == Stage::Revealed {
@@ -251,15 +251,15 @@ impl Game {
         Ok(())
     }
 
-    /// Shows the room what it thought.
+    /// Shows everybody the answer and the room's numbers.
     pub fn reveal(&mut self) -> Result<(), &'static str> {
         self.round_mut()?.stage = Stage::Revealed;
         Ok(())
     }
 
     /// Takes one player's range, into whichever pass is being taken.
-    /// Bounds the wrong way round are swapped rather than refused — the
-    /// fields get filled in either order.
+    /// Bounds given the wrong way round are swapped rather than refused,
+    /// because the two fields get filled in either order.
     pub fn bound(
         &mut self,
         player: &str,
@@ -294,26 +294,26 @@ impl Game {
     }
 }
 
-/// A number and whose it was.
+/// A number and the name of the player it came from.
 #[derive(Serialize)]
 pub struct Extreme {
     pub name: String,
     pub value: f64,
 }
 
-/// What the room thought, which is the part the host reads out.
+/// The room's numbers for one pass.
 #[derive(Serialize)]
 pub struct Stats {
     pub n: usize,
-    /// The middle of the room: the median lower bound and the median upper.
+    /// The median lower bound and the median upper bound.
     pub median_low: f64,
     pub median_high: f64,
     pub mean_low: f64,
     pub mean_high: f64,
-    /// The furthest anybody went in either direction.
+    /// The lowest lower bound and the highest upper bound.
     pub lowest: Extreme,
     pub highest: Extreme,
-    /// The least and the most sure range in the room.
+    /// The widest range and the narrowest.
     pub widest: Extreme,
     pub tightest: Extreme,
     pub median_width: f64,
@@ -353,8 +353,8 @@ impl Round {
         self.ranges(pass).len()
     }
 
-    /// The range that counts for this player: the one they gave after the
-    /// discussion, or their first if there was no second pass.
+    /// The range that counts for this player: the one given after the
+    /// discussion, or the first one if there was no second pass.
     pub fn standing(&self, key: &str) -> Option<Bound> {
         self.after
             .get(key)
@@ -362,7 +362,7 @@ impl Round {
             .copied()
     }
 
-    /// The bounds of one pass with the names attached, in the order people
+    /// The bounds of one pass with names attached, in the order people
     /// joined.
     fn named<'a>(&'a self, players: &'a [Player], pass: Pass) -> Vec<(&'a str, Bound)> {
         let ranges = self.ranges(pass);
@@ -372,7 +372,7 @@ impl Round {
             .collect()
     }
 
-    /// The same over whatever each person's range ended up being.
+    /// The same, over each person's final range.
     fn standings<'a>(&'a self, players: &'a [Player]) -> Vec<(&'a str, Bound)> {
         players
             .iter()
@@ -412,25 +412,25 @@ impl Round {
         })
     }
 
-    /// One pass on its own.
+    /// The numbers for one pass.
     pub fn stats(&self, players: &[Player], pass: Pass) -> Option<Stats> {
         self.stats_of(&self.named(players, pass))
     }
 
-    /// Where the room stands: everybody's last word on the question.
+    /// The numbers over everybody's final range.
     pub fn standing_stats(&self, players: &[Player]) -> Option<Stats> {
         self.stats_of(&self.standings(players))
     }
 }
 
-/// One person's two answers to the same question.
+/// One person's two answers to the same question, and the difference.
 #[derive(Serialize, Clone)]
 pub struct Change {
     pub name: String,
     pub before: Bound,
     pub after: Bound,
-    /// How far the middle of their range moved. The part that is a change
-    /// of mind rather than a change of confidence.
+    /// How far the midpoint of their range moved, which is the change in
+    /// their estimate rather than in their confidence.
     pub moved: f64,
     /// Negative when the second range is narrower than the first.
     pub width_change: f64,
@@ -438,7 +438,7 @@ pub struct Change {
     pub hit_after: Option<bool>,
 }
 
-/// What the discussion did to the room.
+/// What changed between the two passes.
 #[derive(Serialize)]
 pub struct Shift {
     /// People who answered both times.
@@ -447,23 +447,23 @@ pub struct Shift {
     pub moved: usize,
     pub narrower: usize,
     pub wider: usize,
-    /// The middle of the room before and after, so the room can see which
-    /// way it drifted.
+    /// The median midpoint before and after, which shows which way the
+    /// room moved.
     pub median_middle_before: f64,
     pub median_middle_after: f64,
     pub median_width_before: f64,
     pub median_width_after: f64,
-    /// Who changed their mind most, by how far their range's middle moved.
+    /// Whose midpoint moved furthest.
     pub biggest: Option<Change>,
-    /// How many ranges contained the answer each time round.
+    /// How many ranges contained the answer, in each pass.
     pub hits_before: Option<usize>,
     pub hits_after: Option<usize>,
-    /// Of the people who moved, how many moved towards the answer.
+    /// How many people ended up closer to the answer than they started.
     pub towards: Option<usize>,
 }
 
 impl Round {
-    /// Everybody who answered twice, and what changed.
+    /// Everybody who answered both times, and what changed.
     pub fn changes(&self, players: &[Player]) -> Vec<Change> {
         players
             .iter()
@@ -483,7 +483,7 @@ impl Round {
             .collect()
     }
 
-    /// What the discussion did, or `None` if the room only went round once.
+    /// The comparison, or `None` if there was no second pass.
     pub fn shift(&self, players: &[Player]) -> Option<Shift> {
         let changes = self.changes(players);
         if changes.is_empty() {
@@ -535,34 +535,35 @@ impl Round {
     }
 }
 
-/// How one player has done over the evening.
+/// One player's results over the evening.
 #[derive(Serialize, Clone)]
 pub struct Score {
     pub name: String,
     /// Questions answered.
     pub answered: usize,
-    /// Of those, the ones with a known answer, which are the only ones a
-    /// hit rate can be counted over.
+    /// Of those, the ones with a known answer. A hit rate can only be
+    /// counted over these.
     pub scored: usize,
     pub hits: usize,
-    /// Questions where their range came in narrower than the room's median
-    /// one. Widths are not comparable between questions; this is.
+    /// Questions where their range was narrower than the room's median
+    /// range. Widths cannot be compared between questions; this count
+    /// can.
     pub tighter: usize,
     /// Questions where they changed their range after the discussion.
     pub changed_mind: usize,
 }
 
 impl Game {
-    /// Everyone's evening, best hit rate first, and the narrower ranges
-    /// ahead on a tie — a hit rate is easy to come by if every answer is
-    /// "between zero and a billion".
+    /// Everyone's results, best hit rate first, with the narrower ranges
+    /// ahead on a tie. Answering "between nought and a billion" every time
+    /// gives a perfect hit rate and should not win.
     pub fn scores(&self) -> Vec<Score> {
         self.scores_over(|_| true)
     }
 
-    /// The same, counting only the questions the host has revealed. This is
-    /// the one a player is sent: a tally over a question still open would
-    /// tell them whether their own range had hit, which is the answer.
+    /// The same, over the revealed questions only. This is the version a
+    /// player is sent: a tally that included the open question would tell
+    /// them whether their own range had hit.
     pub fn scores_revealed(&self) -> Vec<Score> {
         self.scores_over(|round| round.stage == Stage::Revealed)
     }

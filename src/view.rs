@@ -1,9 +1,9 @@
 //! What each screen is sent.
 //!
-//! Two screens: the host's, which sees everything, and the player's, which
-//! sees its own ranges and nothing else about the question until the host
-//! reveals it. The split is here rather than in the page, because a page
-//! can be read.
+//! The host's view contains everything. A player's view contains their own
+//! ranges and nothing else about the question until the host reveals it.
+//! The two are built here rather than filtered in the page, because
+//! anything sent to a page can be read there.
 
 use serde::Serialize;
 
@@ -12,7 +12,7 @@ use crate::game::{Bound, Change, Game, Pass, Round, Score, Shift, Stage, Stats};
 #[derive(Serialize)]
 pub struct Who<'a> {
     name: &'a str,
-    /// Whether they gave a range before the discussion, and after it.
+    /// Whether they gave a range in the first pass, and in the second.
     first: bool,
     second: bool,
 }
@@ -23,7 +23,7 @@ pub struct Answer<'a> {
     low: f64,
     high: f64,
     width: f64,
-    /// Whether it contained the answer, once there is one.
+    /// Whether it contained the answer, where there is one.
     hit: Option<bool>,
 }
 
@@ -43,7 +43,7 @@ pub struct Past<'a> {
     answer: Option<f64>,
     n: usize,
     hits: Option<usize>,
-    /// How many contained it before the discussion, where there was one.
+    /// How many contained it in the first pass, where there was one.
     hits_before: Option<usize>,
 }
 
@@ -53,14 +53,14 @@ pub struct Host<'a> {
     confidence: u8,
     players: Vec<Who<'a>>,
     round: Option<Asked<'a>>,
-    /// The first pass, the second, and where everybody ended up.
+    /// The first pass, the second pass, and everybody's final ranges.
     before: Option<Stats>,
     after: Option<Stats>,
     standing: Option<Stats>,
-    /// What the discussion did, once there are two passes to compare.
+    /// The comparison, once there are two passes to compare.
     shift: Option<Shift>,
     changes: Vec<Change>,
-    /// Everybody's standing range, lowest first.
+    /// Everybody's final range, lowest first.
     answers: Vec<Answer<'a>>,
     /// Newest first, the question on now excluded.
     history: Vec<Past<'a>>,
@@ -72,20 +72,20 @@ pub struct Player<'a> {
     name: &'a str,
     confidence: u8,
     round: Option<Asked<'a>>,
-    /// This player's own two ranges.
+    /// This player's two ranges.
     mine_before: Option<Bound>,
     mine_after: Option<Bound>,
-    /// How far along the room is on whichever pass is being taken, which
-    /// is all a player is told about everybody else before the reveal.
+    /// How many have answered the pass being taken. Before the reveal,
+    /// this is all a player is told about anybody else.
     submitted: usize,
     players: usize,
-    /// Everything below here waits for the reveal.
+    /// Everything from here down is only sent after the reveal.
     standing: Option<Stats>,
     before: Option<Stats>,
     shift: Option<Shift>,
     hit: Option<bool>,
     hit_before: Option<bool>,
-    /// This player's own change of mind.
+    /// How this player's own two answers differed.
     mine_changed: Option<Change>,
     score: Option<Score>,
 }
@@ -97,15 +97,15 @@ impl Round {
             question: &self.question,
             unit: &self.unit,
             stage: self.stage,
-            // The answer goes to the host whenever there is one, and to
-            // everybody else only after the reveal.
+            // The host is sent the answer as soon as there is one.
+            // Everybody else is sent it after the reveal.
             answer: self.answer.filter(|_| to_host || revealed),
             asked: self.asked,
         }
     }
 
-    /// How many people have answered the pass being taken. Once the
-    /// question is over, how many answered it at all.
+    /// How many have answered the pass being taken. Once the question is
+    /// over, how many answered it at all.
     fn in_so_far(&self, players: &[crate::game::Player]) -> usize {
         match self.stage {
             Stage::First | Stage::Discussion => self.taken(Pass::First),
@@ -118,7 +118,7 @@ impl Round {
     }
 }
 
-/// Everything, because the host is the one running the room.
+/// The host's view, which holds everything about the question.
 pub fn host(game: &Game) -> Host<'_> {
     let round = game.round();
     let answers = round
@@ -217,8 +217,8 @@ pub fn player<'a>(game: &'a Game, key: &str) -> Option<Player<'a>> {
                 .into_iter()
                 .find(|change| change.name == player.name)
         }),
-        // Only the revealed questions: a tally over the one still open
-        // would say whether this player's own range had hit.
+        // The revealed questions only. A tally that included the open
+        // question would say whether this player's own range had hit.
         score: game
             .scores_revealed()
             .into_iter()
