@@ -800,6 +800,31 @@ mod tests {
         assert_eq!(round.standing_stats(&game.players).unwrap().hits, Some(1));
     }
 
+    /// The host may know the answer when they ask, look it up while the
+    /// room is arguing, or correct it after the reveal. Asking the next
+    /// question is what closes the one before it.
+    #[test]
+    fn the_answer_can_be_set_at_any_point_until_the_next_question() {
+        let (mut game, keys) = room();
+        game.ask("How many?", "", Some(10.0), 1000).unwrap();
+        game.bound(&keys[0], 1.0, 2.0, 1001).unwrap();
+        game.set_answer(Some(20.0)).unwrap();
+        assert_eq!(game.round().unwrap().answer, Some(20.0));
+
+        game.reveal().unwrap();
+        game.set_answer(Some(30.0)).unwrap();
+        assert_eq!(
+            game.round().unwrap().answer,
+            Some(30.0),
+            "a wrong answer can be corrected after the reveal"
+        );
+
+        game.ask("Next", "", None, 2000).unwrap();
+        game.set_answer(Some(40.0)).unwrap();
+        assert_eq!(game.rounds[0].answer, Some(30.0), "the old one is settled");
+        assert_eq!(game.rounds[1].answer, Some(40.0));
+    }
+
     #[test]
     fn a_revealed_question_takes_nothing_more_and_cannot_be_reopened() {
         let (mut game, keys) = room();

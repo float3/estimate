@@ -491,11 +491,18 @@ function host(key: string): void {
       hide("to-second", round.stage !== "discussion");
       hide("to-first", round.stage !== "discussion");
       hide("reveal", round.stage === "revealed");
-      hide("answer-form", round.stage === "revealed" && round.answer !== null);
+      // The answer can be entered when the question is asked, typed in
+      // while it is being answered, or corrected after the reveal. It
+      // stays editable until the next question replaces it.
+      hide("answer-form", false);
       if (answerFor !== round.asked) {
         answerFor = round.asked;
         setValue("true-answer", round.answer);
       }
+      text(
+        "answer-label",
+        round.answer === null ? "The answer" : "The answer, which you can still change",
+      );
       drawNumbers(view);
       drawRanges(view);
     }
