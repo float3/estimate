@@ -1,0 +1,41 @@
+/* The estimation game's own few rules. Everything else is rooms.css. */
+
+/* Once somebody is in, the QR code has done its job and the room's own
+ * numbers want the screen. */
+#room.tight .qr svg {
+  width: 112px;
+}
+
+#room.tight .link {
+  font-size: 0.85rem;
+}
+
+/* The two bounds, side by side even on the narrowest phone: they are one
+ * answer and reading them apart would be worse than reading them small. */
+.bounds {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.bounds label {
+  margin-top: 10px;
+}
+
+details {
+  margin-top: 14px;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+
+summary {
+  cursor: pointer;
+  min-height: 44px;
+  padding-block: 10px;
+  font-size: 0.9rem;
+  color: var(--body);
+}
+
+h3 {
+  margin-top: 24px;
+}

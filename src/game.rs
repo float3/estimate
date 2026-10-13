@@ -2,10 +2,13 @@
 //!
 //! The host asks a question and everybody gives a range they are
 //! `confidence` per cent sure the answer falls in. That is the game: not
-//! being right, but knowing how wide to make the range. So the numbers the
-//! host is shown are the room's bounds — where it agreed, how far apart it
-//! got, who went narrow — and, once the host enters the answer, how many
-//! ranges actually contained it.
+//! being right, but knowing how wide to make the range.
+//!
+//! Then the room talks about it and everybody answers the same question
+//! again. The second set of bounds is the interesting one, because the
+//! difference between the two is how much each person was moved by what
+//! they heard — who narrowed, who widened, who did not budge, and whether
+//! any of it brought the room closer to the answer.
 
 use std::collections::HashMap;
 
@@ -21,6 +24,38 @@ pub const MAX_NAME: usize = 32;
 /// number only means something if everyone in the room uses the same one.
 pub const CONFIDENCES: &[u8] = &[50, 80, 90, 98];
 
+/// Where a question has got to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Stage {
+    /// Taking the first ranges, before anybody has said anything.
+    First,
+    /// The room is talking it over. Nothing is being taken.
+    Discussion,
+    /// Taking the second ranges, now that it has.
+    Second,
+    /// Everybody can see everything.
+    Revealed,
+}
+
+impl Stage {
+    /// Which set of bounds this stage is taking, if any.
+    fn taking(self) -> Option<Pass> {
+        match self {
+            Stage::First => Some(Pass::First),
+            Stage::Second => Some(Pass::Second),
+            Stage::Discussion | Stage::Revealed => None,
+        }
+    }
+}
+
+/// Before the discussion, or after it.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Pass {
+    First,
+    Second,
+}
+
 /// One person's range for one question.
 #[derive(Clone, Copy, Serialize, Deserialize)]
 pub struct Bound {
@@ -30,11 +65,17 @@ pub struct Bound {
 }
 
 impl Bound {
-    fn width(&self) -> f64 {
+    pub fn width(&self) -> f64 {
         self.high - self.low
     }
 
-    fn contains(&self, answer: f64) -> bool {
+    /// The number this range is pointed at, which is what moves when
+    /// somebody changes their mind rather than just their certainty.
+    pub fn middle(&self) -> f64 {
+        (self.low + self.high) / 2.0
+    }
+
+    pub fn contains(&self, answer: f64) -> bool {
         self.low <= answer && answer <= self.high
     }
 }
@@ -54,13 +95,12 @@ pub struct Round {
     /// The truth. The host can type it in before asking or after seeing the
     /// bounds; until it is revealed, nobody else is sent it.
     pub answer: Option<f64>,
-    /// Whether players have been shown the answer and the room's numbers.
-    pub revealed: bool,
-    /// Whether bounds are still being taken.
-    pub open: bool,
+    pub stage: Stage,
     pub asked: u64,
-    /// By player key.
-    pub bounds: HashMap<String, Bound>,
+    /// Before the discussion, by player key.
+    pub before: HashMap<String, Bound>,
+    /// After it.
+    pub after: HashMap<String, Bound>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -176,22 +216,30 @@ impl Game {
             return Err("That answer is not a number.");
         }
         if let Some(round) = self.rounds.last_mut() {
-            round.open = false;
+            round.stage = Stage::Revealed;
         }
         self.rounds.push(Round {
             question,
             unit: tidy(unit, MAX_UNIT),
             answer,
-            revealed: false,
-            open: true,
+            stage: Stage::First,
             asked: now,
-            bounds: HashMap::new(),
+            before: HashMap::new(),
+            after: HashMap::new(),
         });
         Ok(())
     }
 
-    pub fn set_open(&mut self, open: bool) -> Result<(), &'static str> {
-        self.round_mut()?.open = open;
+    /// Moves the question on: to the discussion, to the second ranges, or
+    /// to the reveal. The host can also go back, for somebody who was in
+    /// the loo — but not out of the reveal, because by then everybody has
+    /// seen the answer.
+    pub fn move_to(&mut self, stage: Stage) -> Result<(), &'static str> {
+        let round = self.round_mut()?;
+        if round.stage == Stage::Revealed {
+            return Err("This question is over.");
+        }
+        round.stage = stage;
         Ok(())
     }
 
@@ -203,17 +251,15 @@ impl Game {
         Ok(())
     }
 
-    /// Shows the room what it thought. Stops taking bounds at the same
-    /// time: a range typed after the answer is on the wall is not a guess.
+    /// Shows the room what it thought.
     pub fn reveal(&mut self) -> Result<(), &'static str> {
-        let round = self.round_mut()?;
-        round.open = false;
-        round.revealed = true;
+        self.round_mut()?.stage = Stage::Revealed;
         Ok(())
     }
 
-    /// Takes one player's range. Bounds the wrong way round are swapped
-    /// rather than refused — the fields get filled in either order.
+    /// Takes one player's range, into whichever pass is being taken.
+    /// Bounds the wrong way round are swapped rather than refused — the
+    /// fields get filled in either order.
     pub fn bound(
         &mut self,
         player: &str,
@@ -228,17 +274,22 @@ impl Game {
             return Err("This link does not belong to anyone in the room.");
         }
         let round = self.round_mut()?;
-        if !round.open {
-            return Err("This question is closed.");
-        }
+        let Some(pass) = round.stage.taking() else {
+            return Err(match round.stage {
+                Stage::Discussion => "The room is talking this one over.",
+                _ => "This question is closed.",
+            });
+        };
         let (low, high) = if low <= high {
             (low, high)
         } else {
             (high, low)
         };
-        round
-            .bounds
-            .insert(player.to_string(), Bound { low, high, at: now });
+        let bound = Bound { low, high, at: now };
+        match pass {
+            Pass::First => round.before.insert(player.to_string(), bound),
+            Pass::Second => round.after.insert(player.to_string(), bound),
+        };
         Ok(())
     }
 }
@@ -285,17 +336,51 @@ fn sorted_by<T: Copy>(values: impl Iterator<Item = T>, of: impl Fn(T) -> f64) ->
     values
 }
 
+fn mean(values: &[f64]) -> f64 {
+    values.iter().sum::<f64>() / values.len() as f64
+}
+
 impl Round {
-    /// The bounds with the names attached, in the order people joined.
-    fn named<'a>(&'a self, players: &'a [Player]) -> Vec<(&'a str, Bound)> {
+    fn ranges(&self, pass: Pass) -> &HashMap<String, Bound> {
+        match pass {
+            Pass::First => &self.before,
+            Pass::Second => &self.after,
+        }
+    }
+
+    /// Whether anybody answered this pass.
+    pub fn taken(&self, pass: Pass) -> usize {
+        self.ranges(pass).len()
+    }
+
+    /// The range that counts for this player: the one they gave after the
+    /// discussion, or their first if there was no second pass.
+    pub fn standing(&self, key: &str) -> Option<Bound> {
+        self.after
+            .get(key)
+            .or_else(|| self.before.get(key))
+            .copied()
+    }
+
+    /// The bounds of one pass with the names attached, in the order people
+    /// joined.
+    fn named<'a>(&'a self, players: &'a [Player], pass: Pass) -> Vec<(&'a str, Bound)> {
+        let ranges = self.ranges(pass);
         players
             .iter()
-            .filter_map(|p| self.bounds.get(&p.key).map(|b| (p.name.as_str(), *b)))
+            .filter_map(|p| ranges.get(&p.key).map(|b| (p.name.as_str(), *b)))
             .collect()
     }
 
-    pub fn stats(&self, players: &[Player]) -> Option<Stats> {
-        let named = self.named(players);
+    /// The same over whatever each person's range ended up being.
+    fn standings<'a>(&'a self, players: &'a [Player]) -> Vec<(&'a str, Bound)> {
+        players
+            .iter()
+            .filter_map(|p| self.standing(&p.key).map(|b| (p.name.as_str(), b)))
+            .collect()
+    }
+
+    fn stats_of(&self, named: &[(&str, Bound)]) -> Option<Stats> {
         let n = named.len();
         if n == 0 {
             return None;
@@ -314,8 +399,8 @@ impl Round {
             n,
             median_low: median(&lows),
             median_high: median(&highs),
-            mean_low: lows.iter().sum::<f64>() / n as f64,
-            mean_high: highs.iter().sum::<f64>() / n as f64,
+            mean_low: mean(&lows),
+            mean_high: mean(&highs),
             lowest: at(by_low[0].0, by_low[0].1.low),
             highest: at(by_high[n - 1].0, by_high[n - 1].1.high),
             widest: at(by_width[n - 1].0, by_width[n - 1].1.width()),
@@ -326,10 +411,132 @@ impl Round {
                 .map(|answer| named.iter().filter(|(_, b)| b.contains(answer)).count()),
         })
     }
+
+    /// One pass on its own.
+    pub fn stats(&self, players: &[Player], pass: Pass) -> Option<Stats> {
+        self.stats_of(&self.named(players, pass))
+    }
+
+    /// Where the room stands: everybody's last word on the question.
+    pub fn standing_stats(&self, players: &[Player]) -> Option<Stats> {
+        self.stats_of(&self.standings(players))
+    }
+}
+
+/// One person's two answers to the same question.
+#[derive(Serialize, Clone)]
+pub struct Change {
+    pub name: String,
+    pub before: Bound,
+    pub after: Bound,
+    /// How far the middle of their range moved. The part that is a change
+    /// of mind rather than a change of confidence.
+    pub moved: f64,
+    /// Negative when the second range is narrower than the first.
+    pub width_change: f64,
+    pub hit_before: Option<bool>,
+    pub hit_after: Option<bool>,
+}
+
+/// What the discussion did to the room.
+#[derive(Serialize)]
+pub struct Shift {
+    /// People who answered both times.
+    pub n: usize,
+    /// Of those, how many changed anything at all.
+    pub moved: usize,
+    pub narrower: usize,
+    pub wider: usize,
+    /// The middle of the room before and after, so the room can see which
+    /// way it drifted.
+    pub median_middle_before: f64,
+    pub median_middle_after: f64,
+    pub median_width_before: f64,
+    pub median_width_after: f64,
+    /// Who changed their mind most, by how far their range's middle moved.
+    pub biggest: Option<Change>,
+    /// How many ranges contained the answer each time round.
+    pub hits_before: Option<usize>,
+    pub hits_after: Option<usize>,
+    /// Of the people who moved, how many moved towards the answer.
+    pub towards: Option<usize>,
+}
+
+impl Round {
+    /// Everybody who answered twice, and what changed.
+    pub fn changes(&self, players: &[Player]) -> Vec<Change> {
+        players
+            .iter()
+            .filter_map(|player| {
+                let before = *self.before.get(&player.key)?;
+                let after = *self.after.get(&player.key)?;
+                Some(Change {
+                    name: player.name.clone(),
+                    before,
+                    after,
+                    moved: (after.middle() - before.middle()).abs(),
+                    width_change: after.width() - before.width(),
+                    hit_before: self.answer.map(|a| before.contains(a)),
+                    hit_after: self.answer.map(|a| after.contains(a)),
+                })
+            })
+            .collect()
+    }
+
+    /// What the discussion did, or `None` if the room only went round once.
+    pub fn shift(&self, players: &[Player]) -> Option<Shift> {
+        let changes = self.changes(players);
+        if changes.is_empty() {
+            return None;
+        }
+        let middles = |pick: fn(&Change) -> Bound| {
+            let mut values: Vec<f64> = changes.iter().map(|c| pick(c).middle()).collect();
+            values.sort_by(f64::total_cmp);
+            median(&values)
+        };
+        let widths = |pick: fn(&Change) -> Bound| {
+            let mut values: Vec<f64> = changes.iter().map(|c| pick(c).width()).collect();
+            values.sort_by(f64::total_cmp);
+            median(&values)
+        };
+        let biggest = changes
+            .iter()
+            .max_by(|a, b| a.moved.total_cmp(&b.moved))
+            .filter(|change| change.moved > 0.0)
+            .cloned();
+        Some(Shift {
+            n: changes.len(),
+            moved: changes
+                .iter()
+                .filter(|c| c.moved > 0.0 || c.width_change != 0.0)
+                .count(),
+            narrower: changes.iter().filter(|c| c.width_change < 0.0).count(),
+            wider: changes.iter().filter(|c| c.width_change > 0.0).count(),
+            median_middle_before: middles(|c| c.before),
+            median_middle_after: middles(|c| c.after),
+            median_width_before: widths(|c| c.before),
+            median_width_after: widths(|c| c.after),
+            biggest,
+            hits_before: self
+                .answer
+                .map(|a| changes.iter().filter(|c| c.before.contains(a)).count()),
+            hits_after: self
+                .answer
+                .map(|a| changes.iter().filter(|c| c.after.contains(a)).count()),
+            towards: self.answer.map(|answer| {
+                changes
+                    .iter()
+                    .filter(|c| {
+                        (c.after.middle() - answer).abs() < (c.before.middle() - answer).abs()
+                    })
+                    .count()
+            }),
+        })
+    }
 }
 
 /// How one player has done over the evening.
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 pub struct Score {
     pub name: String,
     /// Questions answered.
@@ -341,6 +548,8 @@ pub struct Score {
     /// Questions where their range came in narrower than the room's median
     /// one. Widths are not comparable between questions; this is.
     pub tighter: usize,
+    /// Questions where they changed their range after the discussion.
+    pub changed_mind: usize,
 }
 
 impl Game {
@@ -355,7 +564,7 @@ impl Game {
     /// the one a player is sent: a tally over a question still open would
     /// tell them whether their own range had hit, which is the answer.
     pub fn scores_revealed(&self) -> Vec<Score> {
-        self.scores_over(|round| round.revealed)
+        self.scores_over(|round| round.stage == Stage::Revealed)
     }
 
     fn scores_over(&self, counted: impl Fn(&Round) -> bool) -> Vec<Score> {
@@ -369,9 +578,10 @@ impl Game {
                     scored: 0,
                     hits: 0,
                     tighter: 0,
+                    changed_mind: 0,
                 };
                 for round in self.rounds.iter().filter(|round| counted(round)) {
-                    let Some(bound) = round.bounds.get(&player.key) else {
+                    let Some(bound) = round.standing(&player.key) else {
                         continue;
                     };
                     score.answered += 1;
@@ -381,10 +591,16 @@ impl Game {
                             score.hits += 1;
                         }
                     }
-                    if let Some(stats) = round.stats(&self.players)
+                    if let Some(stats) = round.standing_stats(&self.players)
                         && bound.width() < stats.median_width
                     {
                         score.tighter += 1;
+                    }
+                    if let (Some(before), Some(after)) =
+                        (round.before.get(&player.key), round.after.get(&player.key))
+                        && (before.low != after.low || before.high != after.high)
+                    {
+                        score.changed_mind += 1;
                     }
                 }
                 score
@@ -430,7 +646,8 @@ mod tests {
         for (key, (low, high)) in keys.iter().zip(ranges) {
             game.bound(key, low, high, 1001).unwrap();
         }
-        let stats = game.round().unwrap().stats(&game.players).unwrap();
+        let round = game.round().unwrap();
+        let stats = round.stats(&game.players, Pass::First).unwrap();
         assert_eq!(stats.n, 4);
         assert_eq!(stats.median_low, 25.0, "lows 10 20 30 100");
         assert_eq!(stats.median_high, 75.0, "highs 40 60 90 120");
@@ -465,7 +682,11 @@ mod tests {
         game.bound(&keys[1], 10.0, 50.0, 1001).unwrap(); // ends on it
         game.bound(&keys[2], 50.0, 50.0, 1001).unwrap(); // is it
         game.bound(&keys[3], 51.0, 80.0, 1001).unwrap(); // misses by one
-        let stats = game.round().unwrap().stats(&game.players).unwrap();
+        let stats = game
+            .round()
+            .unwrap()
+            .stats(&game.players, Pass::First)
+            .unwrap();
         assert_eq!(stats.hits, Some(3));
     }
 
@@ -474,19 +695,59 @@ mod tests {
         let (mut game, keys) = room();
         game.ask("How many?", "", None, 1000).unwrap();
         game.bound(&keys[0], 90.0, 10.0, 1001).unwrap();
-        let bound = game.round().unwrap().bounds[&keys[0]];
+        let bound = game.round().unwrap().before[&keys[0]];
         assert_eq!((bound.low, bound.high), (10.0, 90.0));
     }
 
     #[test]
-    fn a_closed_question_takes_nothing_more() {
+    fn nothing_is_taken_while_the_room_is_talking() {
+        let (mut game, keys) = room();
+        game.ask("How many?", "", None, 1000).unwrap();
+        game.bound(&keys[0], 1.0, 2.0, 1001).unwrap();
+        game.move_to(Stage::Discussion).unwrap();
+        assert_eq!(
+            game.bound(&keys[0], 5.0, 6.0, 1002),
+            Err("The room is talking this one over.")
+        );
+        assert_eq!(game.round().unwrap().before[&keys[0]].high, 2.0);
+    }
+
+    #[test]
+    fn the_second_pass_is_kept_apart_from_the_first() {
+        let (mut game, keys) = room();
+        game.ask("How many?", "", None, 1000).unwrap();
+        game.bound(&keys[0], 0.0, 100.0, 1001).unwrap();
+        game.move_to(Stage::Discussion).unwrap();
+        game.move_to(Stage::Second).unwrap();
+        game.bound(&keys[0], 40.0, 60.0, 1002).unwrap();
+
+        let round = game.round().unwrap();
+        assert_eq!(round.before[&keys[0]].high, 100.0, "the first still stands");
+        assert_eq!(round.after[&keys[0]].high, 60.0);
+        assert_eq!(round.standing(&keys[0]).unwrap().high, 60.0);
+        assert!(!round.after.is_empty(), "the room went round twice");
+    }
+
+    #[test]
+    fn a_question_with_no_second_pass_stands_on_its_first() {
+        let (mut game, keys) = room();
+        game.ask("How many?", "", Some(50.0), 1000).unwrap();
+        game.bound(&keys[0], 40.0, 60.0, 1001).unwrap();
+        game.reveal().unwrap();
+        let round = game.round().unwrap();
+        assert!(round.after.is_empty(), "the room only went round once");
+        assert!(round.shift(&game.players).is_none());
+        assert_eq!(round.standing_stats(&game.players).unwrap().hits, Some(1));
+    }
+
+    #[test]
+    fn a_revealed_question_takes_nothing_more_and_cannot_be_reopened() {
         let (mut game, keys) = room();
         game.ask("How many?", "", None, 1000).unwrap();
         game.bound(&keys[0], 1.0, 2.0, 1001).unwrap();
         game.reveal().unwrap();
         assert!(game.bound(&keys[0], 1.0, 1000.0, 1002).is_err());
-        let bound = game.round().unwrap().bounds[&keys[0]];
-        assert_eq!(bound.high, 2.0, "the range stands as it was when it closed");
+        assert!(game.move_to(Stage::First).is_err());
     }
 
     #[test]
@@ -496,10 +757,82 @@ mod tests {
         game.bound(&keys[0], 1.0, 2.0, 1001).unwrap();
         game.ask("Second", "", None, 2000).unwrap();
         assert_eq!(game.rounds.len(), 2);
-        assert!(!game.rounds[0].open);
-        assert_eq!(game.rounds[0].bounds.len(), 1);
-        assert!(game.rounds[1].open);
-        assert!(game.rounds[1].bounds.is_empty());
+        assert_eq!(game.rounds[0].stage, Stage::Revealed);
+        assert_eq!(game.rounds[0].before.len(), 1);
+        assert_eq!(game.rounds[1].stage, Stage::First);
+        assert!(game.rounds[1].before.is_empty());
+    }
+
+    #[test]
+    fn the_shift_says_who_moved_and_which_way_the_room_went() {
+        let (mut game, keys) = room();
+        game.ask("How many?", "", Some(50.0), 1000).unwrap();
+        // Ada narrows and stays put, Bo moves a long way towards 50,
+        // Cy widens and away, Di does not change at all.
+        let first = [(0.0, 100.0), (0.0, 10.0), (40.0, 60.0), (30.0, 70.0)];
+        for (key, (low, high)) in keys.iter().zip(first) {
+            game.bound(key, low, high, 1001).unwrap();
+        }
+        game.move_to(Stage::Second).unwrap();
+        let second = [(25.0, 75.0), (40.0, 60.0), (0.0, 30.0), (30.0, 70.0)];
+        for (key, (low, high)) in keys.iter().zip(second) {
+            game.bound(key, low, high, 1002).unwrap();
+        }
+        game.reveal().unwrap();
+
+        let round = game.round().unwrap();
+        let shift = round.shift(&game.players).expect("two passes");
+        assert_eq!(shift.n, 4);
+        assert_eq!(shift.moved, 3, "Di did not touch theirs");
+        assert_eq!(shift.narrower, 1, "only Ada's range got smaller");
+        assert_eq!(shift.wider, 2, "Bo's and Cy's got bigger");
+        assert_eq!(
+            shift.hits_before,
+            Some(3),
+            "0-100, 40-60 and 30-70 all hold 50"
+        );
+        assert_eq!(shift.hits_after, Some(3), "Cy let go of it, Bo caught it");
+        assert_eq!(shift.towards, Some(1), "only Bo ended up nearer the answer");
+        assert_eq!(shift.biggest.as_ref().map(|c| c.name.as_str()), Some("Bo"));
+        assert_eq!(shift.biggest.as_ref().map(|c| c.moved), Some(45.0));
+        assert_eq!(shift.median_middle_before, 50.0);
+        assert_eq!(shift.median_width_before, 30.0, "widths 100 10 20 40");
+        assert_eq!(shift.median_width_after, 35.0, "widths 50 20 30 40");
+    }
+
+    #[test]
+    fn moving_towards_the_answer_is_counted_only_when_there_is_one() {
+        let (mut game, keys) = room();
+        game.ask("How many?", "", None, 1000).unwrap();
+        game.bound(&keys[0], 0.0, 10.0, 1001).unwrap();
+        game.move_to(Stage::Second).unwrap();
+        game.bound(&keys[0], 40.0, 60.0, 1002).unwrap();
+        let round = game.round().unwrap();
+        let shift = round.shift(&game.players).unwrap();
+        assert_eq!(shift.towards, None);
+        assert_eq!(shift.hits_before, None);
+
+        game.set_answer(Some(50.0)).unwrap();
+        let shift = game.round().unwrap().shift(&game.players).unwrap();
+        assert_eq!(shift.towards, Some(1));
+        assert_eq!((shift.hits_before, shift.hits_after), (Some(0), Some(1)));
+    }
+
+    #[test]
+    fn somebody_who_only_answered_the_second_time_is_not_a_change() {
+        let (mut game, keys) = room();
+        game.ask("How many?", "", None, 1000).unwrap();
+        game.bound(&keys[0], 1.0, 2.0, 1001).unwrap();
+        game.move_to(Stage::Second).unwrap();
+        game.bound(&keys[1], 5.0, 6.0, 1002).unwrap();
+        let round = game.round().unwrap();
+        assert_eq!(round.changes(&game.players).len(), 0, "nobody did both");
+        assert!(round.shift(&game.players).is_none());
+        assert_eq!(
+            round.standing_stats(&game.players).unwrap().n,
+            2,
+            "but both of them still count towards where the room stands"
+        );
     }
 
     #[test]
@@ -521,7 +854,7 @@ mod tests {
     fn nothing_but_a_question_is_asked() {
         let mut game = Game::new(1000);
         assert!(game.ask("  ", "", None, 1000).is_err());
-        assert!(game.set_open(true).is_err(), "there is no question yet");
+        assert!(game.move_to(Stage::Second).is_err(), "there is no question");
         assert!(game.round().is_none());
     }
 
@@ -548,9 +881,26 @@ mod tests {
         );
         assert_eq!(scores[0].tighter, 0, "20 is the median width, not under it");
         assert_eq!(scores[1].name, "Bo", "same hit rate, so by name");
-        assert_eq!(scores[1].hits, 1);
         assert_eq!(scores[2].name, "Cy", "a miss comes last");
         assert_eq!(scores[2].tighter, 1);
+    }
+
+    #[test]
+    fn the_scoreboard_counts_who_changed_their_mind() {
+        let (mut game, keys) = room();
+        game.ask("One", "", None, 1000).unwrap();
+        game.bound(&keys[0], 1.0, 2.0, 1001).unwrap();
+        game.bound(&keys[1], 1.0, 2.0, 1001).unwrap();
+        game.move_to(Stage::Second).unwrap();
+        game.bound(&keys[0], 3.0, 4.0, 1002).unwrap();
+        game.bound(&keys[1], 1.0, 2.0, 1002).unwrap();
+        game.reveal().unwrap();
+
+        let scores = game.scores();
+        let ada = scores.iter().find(|s| s.name == "Ada").unwrap();
+        let bo = scores.iter().find(|s| s.name == "Bo").unwrap();
+        assert_eq!(ada.changed_mind, 1);
+        assert_eq!(bo.changed_mind, 0, "the same range twice is not a change");
     }
 
     #[test]
@@ -575,7 +925,9 @@ mod tests {
     fn a_question_nobody_has_answered_has_no_numbers() {
         let (mut game, _) = room();
         game.ask("One", "", None, 1000).unwrap();
-        assert!(game.round().unwrap().stats(&game.players).is_none());
+        let round = game.round().unwrap();
+        assert!(round.stats(&game.players, Pass::First).is_none());
+        assert!(round.standing_stats(&game.players).is_none());
     }
 
     #[test]

@@ -1,19 +1,20 @@
 //! What each screen is sent.
 //!
 //! Two screens: the host's, which sees everything, and the player's, which
-//! sees its own range and nothing else about the question until the host
+//! sees its own ranges and nothing else about the question until the host
 //! reveals it. The split is here rather than in the page, because a page
 //! can be read.
 
 use serde::Serialize;
 
-use crate::game::{Bound, Game, Round, Score, Stats};
+use crate::game::{Bound, Change, Game, Pass, Round, Score, Shift, Stage, Stats};
 
 #[derive(Serialize)]
 pub struct Who<'a> {
     name: &'a str,
-    /// Whether they have given a range for the question on now.
-    answered: bool,
+    /// Whether they gave a range before the discussion, and after it.
+    first: bool,
+    second: bool,
 }
 
 #[derive(Serialize)]
@@ -30,8 +31,7 @@ pub struct Answer<'a> {
 pub struct Asked<'a> {
     question: &'a str,
     unit: &'a str,
-    open: bool,
-    revealed: bool,
+    stage: Stage,
     answer: Option<f64>,
     asked: u64,
 }
@@ -43,6 +43,8 @@ pub struct Past<'a> {
     answer: Option<f64>,
     n: usize,
     hits: Option<usize>,
+    /// How many contained it before the discussion, where there was one.
+    hits_before: Option<usize>,
 }
 
 #[derive(Serialize)]
@@ -51,7 +53,14 @@ pub struct Host<'a> {
     confidence: u8,
     players: Vec<Who<'a>>,
     round: Option<Asked<'a>>,
-    stats: Option<Stats>,
+    /// The first pass, the second, and where everybody ended up.
+    before: Option<Stats>,
+    after: Option<Stats>,
+    standing: Option<Stats>,
+    /// What the discussion did, once there are two passes to compare.
+    shift: Option<Shift>,
+    changes: Vec<Change>,
+    /// Everybody's standing range, lowest first.
     answers: Vec<Answer<'a>>,
     /// Newest first, the question on now excluded.
     history: Vec<Past<'a>>,
@@ -63,30 +72,48 @@ pub struct Player<'a> {
     name: &'a str,
     confidence: u8,
     round: Option<Asked<'a>>,
-    /// The range this player gave, which they can see and change while the
-    /// question is open.
-    mine: Option<Bound>,
-    /// How far along the room is, which is all a player is told about
-    /// everybody else before the reveal.
+    /// This player's own two ranges.
+    mine_before: Option<Bound>,
+    mine_after: Option<Bound>,
+    /// How far along the room is on whichever pass is being taken, which
+    /// is all a player is told about everybody else before the reveal.
     submitted: usize,
     players: usize,
-    /// Only once the host has revealed the question.
-    stats: Option<Stats>,
+    /// Everything below here waits for the reveal.
+    standing: Option<Stats>,
+    before: Option<Stats>,
+    shift: Option<Shift>,
     hit: Option<bool>,
+    hit_before: Option<bool>,
+    /// This player's own change of mind.
+    mine_changed: Option<Change>,
     score: Option<Score>,
 }
 
 impl Round {
     fn asked(&self, to_host: bool) -> Asked<'_> {
+        let revealed = self.stage == Stage::Revealed;
         Asked {
             question: &self.question,
             unit: &self.unit,
-            open: self.open,
-            revealed: self.revealed,
+            stage: self.stage,
             // The answer goes to the host whenever there is one, and to
             // everybody else only after the reveal.
-            answer: self.answer.filter(|_| to_host || self.revealed),
+            answer: self.answer.filter(|_| to_host || revealed),
             asked: self.asked,
+        }
+    }
+
+    /// How many people have answered the pass being taken. Once the
+    /// question is over, how many answered it at all.
+    fn in_so_far(&self, players: &[crate::game::Player]) -> usize {
+        match self.stage {
+            Stage::First | Stage::Discussion => self.taken(Pass::First),
+            Stage::Second => self.taken(Pass::Second),
+            Stage::Revealed => players
+                .iter()
+                .filter(|p| self.standing(&p.key).is_some())
+                .count(),
         }
     }
 }
@@ -94,22 +121,19 @@ impl Round {
 /// Everything, because the host is the one running the room.
 pub fn host(game: &Game) -> Host<'_> {
     let round = game.round();
-    let stats = round.and_then(|r| r.stats(&game.players));
     let answers = round
         .map(|round| {
             let mut answers: Vec<Answer<'_>> = game
                 .players
                 .iter()
                 .filter_map(|player| {
-                    let bound = round.bounds.get(&player.key)?;
+                    let bound = round.standing(&player.key)?;
                     Some(Answer {
                         name: &player.name,
                         low: bound.low,
                         high: bound.high,
-                        width: bound.high - bound.low,
-                        hit: round
-                            .answer
-                            .map(|answer| bound.low <= answer && answer <= bound.high),
+                        width: bound.width(),
+                        hit: round.answer.map(|answer| bound.contains(answer)),
                     })
                 })
                 .collect();
@@ -125,23 +149,34 @@ pub fn host(game: &Game) -> Host<'_> {
             .iter()
             .map(|player| Who {
                 name: &player.name,
-                answered: round.is_some_and(|r| r.bounds.contains_key(&player.key)),
+                first: round.is_some_and(|r| r.before.contains_key(&player.key)),
+                second: round.is_some_and(|r| r.after.contains_key(&player.key)),
             })
             .collect(),
         round: round.map(|round| round.asked(true)),
-        stats,
+        before: round.and_then(|r| r.stats(&game.players, Pass::First)),
+        after: round.and_then(|r| r.stats(&game.players, Pass::Second)),
+        standing: round.and_then(|r| r.standing_stats(&game.players)),
+        shift: round.and_then(|r| r.shift(&game.players)),
+        changes: round.map(|r| r.changes(&game.players)).unwrap_or_default(),
         answers,
         history: game
             .rounds
             .iter()
             .rev()
             .skip(1)
-            .map(|round| Past {
-                question: &round.question,
-                unit: &round.unit,
-                answer: round.answer,
-                n: round.bounds.len(),
-                hits: round.stats(&game.players).and_then(|stats| stats.hits),
+            .map(|round| {
+                let standing = round.standing_stats(&game.players);
+                Past {
+                    question: &round.question,
+                    unit: &round.unit,
+                    answer: round.answer,
+                    n: standing.as_ref().map_or(0, |stats| stats.n),
+                    hits: standing.and_then(|stats| stats.hits),
+                    hits_before: round
+                        .shift(&game.players)
+                        .and_then(|shift| shift.hits_before),
+                }
             })
             .collect(),
         scores: game.scores(),
@@ -152,23 +187,36 @@ pub fn host(game: &Game) -> Host<'_> {
 pub fn player<'a>(game: &'a Game, key: &str) -> Option<Player<'a>> {
     let player = game.player(key)?;
     let round = game.round();
-    let mine = round.and_then(|r| r.bounds.get(key)).copied();
-    let revealed = round.is_some_and(|r| r.revealed);
+    let revealed = round.is_some_and(|r| r.stage == Stage::Revealed);
+    let shown = round.filter(|_| revealed);
+    let mine_before = round.and_then(|r| r.before.get(key)).copied();
+    let mine_after = round.and_then(|r| r.after.get(key)).copied();
     let answer = round.and_then(|r| r.answer).filter(|_| revealed);
+    let standing = round.and_then(|r| r.standing(key));
     Some(Player {
         name: &player.name,
         confidence: game.confidence,
         round: round.map(|round| round.asked(false)),
-        mine,
-        submitted: round.map_or(0, |r| r.bounds.len()),
+        mine_before,
+        mine_after,
+        submitted: round.map_or(0, |r| r.in_so_far(&game.players)),
         players: game.players.len(),
-        stats: round
-            .filter(|r| r.revealed)
-            .and_then(|r| r.stats(&game.players)),
-        hit: match (answer, mine) {
-            (Some(answer), Some(bound)) => Some(bound.low <= answer && answer <= bound.high),
+        standing: shown.and_then(|r| r.standing_stats(&game.players)),
+        before: shown.and_then(|r| r.stats(&game.players, Pass::First)),
+        shift: shown.and_then(|r| r.shift(&game.players)),
+        hit: match (answer, standing) {
+            (Some(answer), Some(bound)) => Some(bound.contains(answer)),
             _ => None,
         },
+        hit_before: match (answer, mine_before) {
+            (Some(answer), Some(bound)) => Some(bound.contains(answer)),
+            _ => None,
+        },
+        mine_changed: shown.and_then(|r| {
+            r.changes(&game.players)
+                .into_iter()
+                .find(|change| change.name == player.name)
+        }),
         // Only the revealed questions: a tally over the one still open
         // would say whether this player's own range had hit.
         score: game
@@ -239,9 +287,54 @@ mod tests {
         let (mut game, key) = room();
         game.reveal().unwrap();
         let view = player(&game, &key).unwrap();
-        assert!(view.stats.is_some());
+        assert!(view.standing.is_some());
         assert_eq!(view.hit, Some(false), "1 to 2 does not contain 1234567");
         assert_eq!(view.score.map(|s| s.scored), Some(1));
+    }
+
+    #[test]
+    fn a_player_is_sent_their_own_two_ranges_and_what_changed() {
+        let (mut game, key) = room();
+        game.move_to(Stage::Second).unwrap();
+        game.bound(&key, 1_000_000.0, 2_000_000.0, 1002).unwrap();
+
+        let view = player(&game, &key).unwrap();
+        assert_eq!(view.mine_before.map(|b| b.high), Some(2.0));
+        assert_eq!(view.mine_after.map(|b| b.high), Some(2_000_000.0));
+        assert!(
+            view.mine_changed.is_none(),
+            "what changed waits for the reveal, like everything else"
+        );
+
+        game.reveal().unwrap();
+        let view = player(&game, &key).unwrap();
+        let change = view.mine_changed.expect("both ranges are in");
+        assert_eq!(change.before.high, 2.0);
+        assert_eq!(change.after.low, 1_000_000.0);
+        assert_eq!(view.hit, Some(true), "the second range caught it");
+        assert_eq!(view.hit_before, Some(false), "the first did not");
+    }
+
+    #[test]
+    fn the_host_sees_both_passes_apart_and_where_the_room_ended_up() {
+        let (mut game, key) = room();
+        let other = game.join("Bo", 1000).unwrap();
+        game.bound(&other, 10.0, 20.0, 1001).unwrap();
+        game.move_to(Stage::Second).unwrap();
+        game.bound(&key, 5.0, 6.0, 1002).unwrap();
+
+        let view = host(&game);
+        assert_eq!(view.before.as_ref().map(|s| s.n), Some(2));
+        assert_eq!(view.after.as_ref().map(|s| s.n), Some(1), "only Ada again");
+        assert_eq!(
+            view.standing.as_ref().map(|s| s.n),
+            Some(2),
+            "Bo's first range still stands for Bo"
+        );
+        assert_eq!(view.answers.len(), 2);
+        assert_eq!(view.answers[0].name, "Ada", "5 to 6 is the lowest");
+        assert!(view.players[0].second);
+        assert!(!view.players[1].second);
     }
 
     #[test]
@@ -254,7 +347,7 @@ mod tests {
         assert_eq!(view.answers[0].name, "Bo");
         assert_eq!(view.answers[0].hit, Some(false));
         assert_eq!(view.players.len(), 2);
-        assert!(view.players.iter().all(|who| who.answered));
+        assert!(view.players.iter().all(|who| who.first));
     }
 
     #[test]
@@ -267,7 +360,7 @@ mod tests {
         assert!(view.history.is_empty());
         let view = player(&game, &key).unwrap();
         assert!(view.round.is_none());
-        assert!(view.mine.is_none());
+        assert!(view.mine_before.is_none());
     }
 
     #[test]

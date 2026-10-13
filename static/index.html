@@ -8,72 +8,7 @@
 <meta name="robots" content="noindex">
 <title>Estimation game</title>
 <link rel="icon" href="/icon.svg">
-<style>
-:root{color-scheme:light dark;--paper:#f8f7f2;--card:#fffefa;--tint:#eaefe3;--tint-warm:#e9eadc;--ink:#183c32;--ink-hover:#2c5544;--on-ink:#fffdf4;--body:#495c51;--border:#d5d9cc;--gold:#dcb96c;--mark:#859264;--focus:#b17d20;--bad:#9a3b2f;--shadow:#15392f18}
-@media(prefers-color-scheme:dark){:root{--paper:#121512;--card:#232a24;--tint:#1a211b;--tint-warm:#241f17;--ink:#e7ece4;--ink-hover:#cdd8ca;--on-ink:#121512;--body:#a3aea2;--border:#2d352e;--gold:#d7b566;--mark:#7d9a77;--focus:#d7b566;--bad:#e08b7d;--shadow:#00000055}}
-*{box-sizing:border-box;min-width:0}
-html{-webkit-text-size-adjust:100%}
-body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.6 Arial,Helvetica,sans-serif}
-main{width:min(760px,calc(100% - 32px));margin-inline:auto;padding-bottom:64px}
-h1,h2,h3{font-family:Georgia,'Times New Roman',serif;font-weight:400;line-height:1.15;margin:0}
-h1{font-size:clamp(2rem,7vw,2.9rem);letter-spacing:-.03em}
-h2{font-size:1.6rem;letter-spacing:-.02em}
-h3{font-size:1.2rem}
-p{margin:0}
-a{color:inherit}
-a,button,input{touch-action:manipulation}
-button,input,select{font:inherit;color:inherit}
-:focus-visible{outline:3px solid var(--focus);outline-offset:3px}
-[hidden]{display:none!important}
-.bar{display:flex;align-items:center;justify-content:space-between;gap:16px;padding-block:18px;border-bottom:1px solid var(--border);margin-bottom:28px;flex-wrap:wrap}
-.brand{display:flex;align-items:center;gap:10px;text-decoration:none;font-weight:700;font-size:.95rem}
-.brand img{width:26px;height:26px}
-.eyebrow{font-size:.72rem;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--body)}
-.lead{font-size:1.08rem;line-height:1.7;color:var(--body);margin-top:18px}
-.note{font-size:.875rem;line-height:1.6;color:var(--body)}
-.panel{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:22px;margin-top:22px;box-shadow:0 8px 30px var(--shadow)}
-.panel>h2+p,.panel>h2+.note{margin-top:10px}
-.button{display:inline-flex;align-items:center;justify-content:center;gap:10px;border:1px solid var(--ink);background:transparent;color:var(--ink);padding:13px 20px;min-height:48px;border-radius:4px;font-size:.9rem;font-weight:600;cursor:pointer;text-decoration:none}
-.button:disabled{opacity:.45;cursor:not-allowed}
-.primary{background:var(--ink);color:var(--on-ink)}
-.primary:hover:not(:disabled){background:var(--ink-hover)}
-.actions{display:flex;flex-wrap:wrap;gap:12px;margin-top:18px}
-label{display:block;font-size:.8rem;font-weight:700;letter-spacing:.04em;margin:16px 0 5px}
-input{width:100%;background:var(--paper);border:1px solid var(--border);border-radius:4px;padding:12px 13px;min-height:48px}
-.two{display:grid;grid-template-columns:1fr 1fr;gap:14px}
-.chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
-.chip{border:1px solid var(--border);background:var(--tint);border-radius:30px;padding:8px 15px;min-height:44px;font-size:.85rem;cursor:pointer}
-.chip[aria-pressed=true]{background:var(--ink);color:var(--on-ink);border-color:var(--ink);font-weight:700}
-fieldset{border:0;padding:0;margin:22px 0 0}
-legend{padding:0;font-size:.8rem;font-weight:700;letter-spacing:.04em}
-.link{display:block;margin:10px 0 16px;font-size:1rem;word-break:break-all;text-decoration:underline;text-underline-offset:3px}
-.qr{background:#fff;padding:12px;border-radius:6px;width:fit-content}
-.qr svg{display:block;width:min(232px,60vw);height:auto}
-.error{background:var(--tint-warm);border:1px solid var(--bad);color:var(--bad);border-radius:6px;padding:12px 15px;margin-bottom:18px;font-size:.9rem}
-.scroll{overflow-x:auto;margin-top:16px}
-table{border-collapse:collapse;width:100%;font-size:.9rem}
-th,td{text-align:right;padding:9px 10px;border-bottom:1px solid var(--border);white-space:nowrap}
-th:first-child,td:first-child{text-align:left}
-thead th{font-size:.72rem;letter-spacing:.1em;text-transform:uppercase;color:var(--body);font-weight:700}
-.facts{display:grid;gap:2px;margin-top:16px}
-.fact{display:flex;justify-content:space-between;gap:18px;padding:10px 0;border-bottom:1px solid var(--border);font-size:.95rem}
-.fact>span:first-child{color:var(--body);font-size:.875rem}
-.fact b{font-weight:700;text-align:right}
-.fact small{display:block;font-weight:400;font-size:.78rem;color:var(--body)}
-.big{font:400 clamp(1.6rem,6vw,2.3rem)/1.2 Georgia,serif;margin-top:8px}
-.hit{color:var(--mark);font-weight:700}
-.miss{color:var(--bad);font-weight:700}
-.prose{margin-top:34px;padding-top:26px;border-top:1px solid var(--border);color:var(--body)}
-.prose h2{color:var(--ink);margin:26px 0 12px}
-.prose>h2:first-child{margin-top:0}
-#start-note{margin-top:14px}
-.prose ol,.prose ul{padding-left:20px;display:grid;gap:10px;margin:0}
-.waiting{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-top:12px}
-.dot{width:8px;height:8px;border-radius:50%;background:var(--mark);display:inline-block}
-.past{border-top:1px solid var(--border);padding-block:14px;display:flex;justify-content:space-between;gap:18px;font-size:.9rem}
-.past>span:last-child{color:var(--body);white-space:nowrap}
-@media(max-width:480px){.two{grid-template-columns:1fr}.panel{padding:18px}}
-</style>
+<link rel="stylesheet" href="/app.css">
 </head>
 <body>
 <main>
@@ -88,9 +23,9 @@ thead th{font-size:.72rem;letter-spacing:.1em;text-transform:uppercase;color:var
     <p class="eyebrow">For a room of people</p>
     <h1>How wide is your range?</h1>
     <p class="lead">You ask the question. Everyone gives the range they are
-      ninety per cent sure the answer falls in, from their own phone. You get
-      the room's bounds — where it agreed, how far apart it got, who went
-      narrow — and, once you type the answer in, how many ranges contained it.</p>
+      ninety per cent sure the answer falls in, from their own phone. Then the
+      room talks about it and everyone answers again — and you see who was
+      moved, which way, and whether it helped.</p>
     <div class="actions"><button class="button primary" id="open">Open a room</button></div>
     <p class="note" id="start-note">Nothing to install and nobody signs up. The
       link to the room is the only key there is, so keep the host link: it is the
@@ -102,31 +37,37 @@ thead th{font-size:.72rem;letter-spacing:.1em;text-transform:uppercase;color:var
           and gives a name.</li>
         <li>You ask a question with a number for an answer. How many lamp posts
           are there in Munich? When was the first one lit?</li>
-        <li>Everyone sends a lower and an upper bound. They can change them
-          until you close the question.</li>
-        <li>You close it, read out the room's numbers, and reveal the answer.</li>
+        <li>Everyone sends a lower and an upper bound from their phone.</li>
+        <li>You stop taking ranges, and the room talks it over.</li>
+        <li>You ask for a second range. Everyone's phone starts from what they
+          said the first time, so leaving it alone is an answer too.</li>
+        <li>You reveal. Everybody sees the answer, the room's numbers, and how
+          far the discussion moved them.</li>
       </ol>
-      <h2>Why bounds and not guesses</h2>
+      <h2>Why ranges, and why twice</h2>
       <p>A single guess is almost always wrong, and knowing it is wrong tells
         you nothing. A range is a claim about how much you know: if you are
         ninety per cent sure, then nine of your ten ranges ought to contain the
         answer. Too few and you are overconfident, which is the usual case. Ten
         out of ten and your ranges are wider than they need to be.</p>
+      <p>Asking twice is the other half. The gap between your two ranges is how
+        much the room moved you, and the room can see whether all that moving
+        took it towards the answer or away from it.</p>
     </div>
   </section>
 
   <section id="screen-host" hidden>
-    <div class="panel">
+    <div class="panel" id="room">
       <h2>The room</h2>
       <p class="note">Everybody opens this:</p>
       <a class="link" id="join-link" href="#"></a>
       <div class="qr" id="join-qr"></div>
-      <p class="note" id="who" style="margin-top:14px"></p>
+      <p class="note" id="who"></p>
       <fieldset>
         <legend>How sure everybody is meant to be</legend>
         <div class="chips" id="levels"></div>
-        <p class="note" style="margin-top:10px">Keep this the same all evening,
-          or the hit rate stops meaning anything.</p>
+        <p class="note">Keep this the same all evening, or the hit rate stops
+          meaning anything.</p>
       </fieldset>
     </div>
 
@@ -144,27 +85,27 @@ thead th{font-size:.72rem;letter-spacing:.1em;text-transform:uppercase;color:var
           <input id="answer" type="number" step="any" inputmode="decimal">
         </div>
       </div>
-      <p class="note" style="margin-top:12px">The answer stays on this screen
-        until you reveal it. You can also look it up afterwards.</p>
+      <p class="note">The answer stays on this screen until you reveal it. You
+        can also look it up afterwards.</p>
       <div class="actions"><button class="button primary" type="submit">Ask the room</button></div>
     </form>
 
     <section class="panel" id="asked" hidden>
       <p class="eyebrow" id="h-state"></p>
-      <h2 id="h-question" style="margin-top:8px"></h2>
-      <p class="note" id="progress" style="margin-top:10px"></p>
+      <h2 id="h-question"></h2>
+      <p class="note" id="progress"></p>
       <div class="actions">
-        <button class="button" id="close"></button>
-        <button class="button primary" id="reveal">Reveal</button>
+        <button class="button primary" id="to-discussion">Stop and talk it over</button>
+        <button class="button primary" id="to-second">Ask for a second range</button>
+        <button class="button" id="to-first">Back to the first ranges</button>
+        <button class="button" id="reveal">Reveal</button>
       </div>
       <form id="answer-form">
         <label for="true-answer">The answer</label>
-        <div class="two">
-          <input id="true-answer" type="number" step="any" inputmode="decimal">
-          <button class="button" type="submit">Save the answer</button>
-        </div>
+        <input id="true-answer" type="number" step="any" inputmode="decimal">
+        <div class="actions"><button class="button" type="submit">Save the answer</button></div>
       </form>
-      <div id="stats"></div>
+      <div id="numbers"></div>
       <div id="ranges"></div>
     </section>
 
@@ -178,8 +119,8 @@ thead th{font-size:.72rem;letter-spacing:.1em;text-transform:uppercase;color:var
     <form class="panel" id="name-form">
       <label for="name">Your name</label>
       <input id="name" maxlength="32" required autocomplete="nickname" autocapitalize="words">
-      <p class="note" style="margin-top:10px">The host sees this beside your
-        ranges. Everybody in the room will see it after each reveal.</p>
+      <p class="note">The host sees this beside your ranges. Everybody in the
+        room will see it after each reveal.</p>
       <div class="actions"><button class="button primary" type="submit">Join</button></div>
     </form>
     <p class="note" id="join-count"></p>
@@ -187,12 +128,13 @@ thead th{font-size:.72rem;letter-spacing:.1em;text-transform:uppercase;color:var
 
   <section id="screen-player" hidden>
     <p class="note" id="you"></p>
-    <section class="panel" id="question-box">
+    <section class="panel">
       <p class="eyebrow" id="p-state">Waiting</p>
-      <h1 id="p-question" style="margin-top:10px">Waiting for the first question</h1>
+      <h1 id="p-question">Waiting for the first question</h1>
       <p class="note" id="p-unit"></p>
+      <p class="note" id="mine-before" hidden></p>
       <form id="bounds-form" hidden>
-        <div class="two">
+        <div class="bounds">
           <div>
             <label for="low">At least</label>
             <input id="low" type="number" step="any" inputmode="decimal" required>
@@ -202,7 +144,7 @@ thead th{font-size:.72rem;letter-spacing:.1em;text-transform:uppercase;color:var
             <input id="high" type="number" step="any" inputmode="decimal" required>
           </div>
         </div>
-        <div class="actions"><button class="button primary" type="submit">Send</button></div>
+        <div class="actions send"><button class="button primary" id="send" type="submit">Send</button></div>
         <p class="note" id="mine"></p>
       </form>
       <p class="note" id="p-closed" hidden></p>
@@ -210,371 +152,6 @@ thead th{font-size:.72rem;letter-spacing:.1em;text-transform:uppercase;color:var
     <div id="p-result"></div>
   </section>
 </main>
-
-<script>
-"use strict";
-
-const $ = id => document.getElementById(id);
-const esc = text => String(text).replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"})[c]);
-
-/** Numbers as a person would write them, at whatever size they come in. */
-function num(value) {
-  if (value === null || value === undefined || !isFinite(value)) return "—";
-  const size = Math.abs(value);
-  if (size !== 0 && (size < 1e-4 || size >= 1e15)) return value.toExponential(2);
-  const places = size === 0 ? 0 : size < 10 ? 3 : size < 1000 ? 2 : 0;
-  return value.toLocaleString(undefined, {maximumFractionDigits: places});
-}
-
-let unit = "";
-const withUnit = value => unit ? `${num(value)} ${esc(unit)}` : num(value);
-const range = (low, high) => `${num(low)} – ${withUnit(high)}`;
-/** A width rather than a pair of bounds, said so nobody reads it as one. */
-const span = width => `${withUnit(width)} apart`;
-const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
-
-function fail(message) {
-  $("error").textContent = message;
-  $("error").hidden = !message;
-}
-
-async function api(method, path, body) {
-  const response = await fetch(path, {
-    method,
-    headers: body === undefined ? {} : {"content-type": "application/json"},
-    body: body === undefined ? null : JSON.stringify(body),
-  });
-  const text = await response.text();
-  let data = {};
-  try { data = text ? JSON.parse(text) : {}; } catch (e) { data = {}; }
-  if (!response.ok) throw new Error(data.error || "Something went wrong. Try again.");
-  return data;
-}
-
-/** Holds the event stream open and hands every view to `draw`. */
-function watch(path, draw) {
-  const stream = new EventSource(path);
-  stream.onmessage = event => {
-    try {
-      draw(JSON.parse(event.data).view);
-      fail("");
-    } catch (e) {
-      fail("That room is not here any more.");
-      stream.close();
-    }
-  };
-  stream.onerror = () => {
-    if (stream.readyState === EventSource.CLOSED) fail("Lost the connection. Reload the page.");
-  };
-  return stream;
-}
-
-function show(screen) {
-  for (const section of document.querySelectorAll("main>section")) section.hidden = true;
-  $("screen-" + screen).hidden = false;
-}
-
-// ---------------------------------------------------------------- opening
-
-function start() {
-  show("start");
-  $("open").addEventListener("click", async () => {
-    $("open").disabled = true;
-    try {
-      const keys = await api("POST", "/api/rooms");
-      location.href = "/h/" + keys.host;
-    } catch (e) {
-      fail(e.message);
-      $("open").disabled = false;
-    }
-  });
-}
-
-// ------------------------------------------------------------------- host
-
-function host(key) {
-  show("host");
-  const at = path => `/api/h/${encodeURIComponent(key)}${path}`;
-  let now = {};
-
-  $("where").textContent = "You are the host";
-
-  $("ask-form").addEventListener("submit", async event => {
-    event.preventDefault();
-    const answer = $("answer").valueAsNumber;
-    try {
-      await api("POST", at("/ask"), {
-        question: $("question").value,
-        unit: $("unit").value,
-        answer: isFinite(answer) ? answer : null,
-      });
-      $("question").value = "";
-      $("answer").value = "";
-      fail("");
-    } catch (e) { fail(e.message); }
-  });
-
-  $("close").addEventListener("click", async () => {
-    try {
-      await api("PUT", at("/open"), {open: !now.round.open});
-      fail("");
-    } catch (e) { fail(e.message); }
-  });
-
-  $("reveal").addEventListener("click", async () => {
-    try { await api("POST", at("/reveal")); fail(""); } catch (e) { fail(e.message); }
-  });
-
-  $("answer-form").addEventListener("submit", async event => {
-    event.preventDefault();
-    const answer = $("true-answer").valueAsNumber;
-    try {
-      await api("PUT", at("/answer"), {answer: isFinite(answer) ? answer : null});
-      fail("");
-    } catch (e) { fail(e.message); }
-  });
-
-  let link = "";
-  let shownFor = null;
-
-  function drawRoom(view) {
-    const next = location.origin + "/j/" + view.join;
-    if (next !== link) {
-      link = next;
-      $("join-link").textContent = link;
-      $("join-link").href = link;
-      fetch("/api/qr", {method: "POST", body: link})
-        .then(response => response.ok ? response.text() : "")
-        .then(svg => { $("join-qr").innerHTML = svg; });
-    }
-    const waiting = view.players.filter(who => !who.answered).length;
-    $("who").innerHTML = view.players.length === 0
-      ? "Nobody has joined yet."
-      : `<span class="dot"></span> ${esc(plural(view.players.length, "person", "people"))} in the room`
-        + (view.round && waiting ? ` — waiting on ${esc(view.players.filter(w => !w.answered).map(w => w.name).join(", "))}` : "");
-
-    $("levels").innerHTML = [50, 80, 90, 98].map(level =>
-      `<button type="button" class="chip" data-level="${level}" aria-pressed="${level === view.confidence}">${level}%</button>`
-    ).join("");
-    for (const chip of $("levels").children) {
-      chip.addEventListener("click", async () => {
-        try {
-          await api("PUT", at("/confidence"), {confidence: Number(chip.dataset.level)});
-          fail("");
-        } catch (e) { fail(e.message); }
-      });
-    }
-  }
-
-  function drawStats(view) {
-    const stats = view.stats;
-    if (!stats) {
-      $("stats").innerHTML = `<p class="note" style="margin-top:16px">No ranges yet.</p>`;
-      return;
-    }
-    const expected = Math.round(stats.n * view.confidence / 100);
-    const rows = [
-      ["The middle of the room", `<b>${range(stats.median_low, stats.median_high)}<small>median of the lower and the upper bounds</small></b>`],
-      ["On average", `<b>${range(stats.mean_low, stats.mean_high)}</b>`],
-      ["As low as anyone went", `<b>${withUnit(stats.lowest.value)}<small>${esc(stats.lowest.name)}</small></b>`],
-      ["As high as anyone went", `<b>${withUnit(stats.highest.value)}<small>${esc(stats.highest.name)}</small></b>`],
-      ["Widest range", `<b>${span(stats.widest.value)}<small>${esc(stats.widest.name)}</small></b>`],
-      ["Tightest range", `<b>${span(stats.tightest.value)}<small>${esc(stats.tightest.name)}</small></b>`],
-      ["Middling width", `<b>${span(stats.median_width)}</b>`],
-    ];
-    if (stats.hits !== null && stats.hits !== undefined) {
-      rows.push(["Contained the answer",
-        `<b>${stats.hits} of ${stats.n}<small>at ${view.confidence}%, about ${expected} should</small></b>`]);
-    }
-    $("stats").innerHTML = `<h3 style="margin-top:24px">What the room thinks</h3>
-      <div class="facts">${rows.map(([name, value]) => `<div class="fact"><span>${name}</span>${value}</div>`).join("")}</div>`;
-  }
-
-  function drawRanges(view) {
-    if (!view.answers.length) { $("ranges").innerHTML = ""; return; }
-    const scored = view.answers.some(answer => answer.hit !== null && answer.hit !== undefined);
-    $("ranges").innerHTML = `<h3 style="margin-top:26px">Everybody's ranges</h3>
-      <div class="scroll"><table><thead><tr>
-        <th>Who</th><th>At least</th><th>At most</th><th>Width</th>${scored ? "<th>In?</th>" : ""}
-      </tr></thead><tbody>${view.answers.map(answer => `<tr>
-        <td>${esc(answer.name)}</td><td>${num(answer.low)}</td><td>${num(answer.high)}</td>
-        <td>${num(answer.width)}</td>
-        ${scored ? `<td class="${answer.hit ? "hit" : "miss"}">${answer.hit ? "yes" : "no"}</td>` : ""}
-      </tr>`).join("")}</tbody></table></div>`;
-  }
-
-  function drawBoard(view) {
-    if (!view.scores.length) { $("board").innerHTML = ""; return; }
-    const anyScored = view.scores.some(score => score.scored > 0);
-    $("board").innerHTML = `<h3 style="margin-top:30px">The evening so far</h3>
-      <div class="scroll"><table><thead><tr>
-        <th>Who</th><th>Answered</th>${anyScored ? "<th>Contained it</th><th>Rate</th>" : ""}<th>Tighter than most</th>
-      </tr></thead><tbody>${view.scores.map(score => `<tr>
-        <td>${esc(score.name)}</td><td>${score.answered}</td>
-        ${anyScored ? `<td>${score.hits} of ${score.scored}</td><td>${score.scored ? Math.round(100 * score.hits / score.scored) + "%" : "—"}</td>` : ""}
-        <td>${score.tighter}</td>
-      </tr>`).join("")}</tbody></table></div>
-      <p class="note" style="margin-top:10px">“Tighter than most” counts the
-        questions where the range came in narrower than the room's middling one.
-        A perfect hit rate is easy to get by answering “nought to a billion”.</p>`;
-  }
-
-  function drawHistory(view) {
-    if (!view.history.length) { $("history").innerHTML = ""; return; }
-    $("history").innerHTML = `<h3 style="margin-top:30px">Asked already</h3>
-      ${view.history.map(past => `<div class="past">
-        <span>${esc(past.question)}</span>
-        <span>${past.answer === null ? "no answer" : esc(num(past.answer))}${
-          past.hits === null || past.hits === undefined ? "" : ` · ${past.hits} of ${past.n} in`}</span>
-      </div>`).join("")}`;
-  }
-
-  function draw(view) {
-    now = view;
-    unit = view.round ? view.round.unit : "";
-    drawRoom(view);
-    $("asked").hidden = !view.round;
-    if (view.round) {
-      const round = view.round;
-      $("h-state").textContent = round.revealed ? "Revealed" : round.open ? "Open — taking ranges" : "Closed";
-      $("h-question").textContent = round.question;
-      const answered = view.players.filter(who => who.answered).length;
-      $("progress").textContent = `${answered} of ${plural(view.players.length, "person", "people")} answered`
-        + (round.answer === null ? " · you have not entered the answer yet" : "");
-      $("close").textContent = round.open ? "Close the question" : "Take more ranges";
-      $("close").disabled = round.revealed;
-      $("reveal").disabled = round.revealed;
-      $("reveal").textContent = round.revealed ? "Revealed" : "Close and reveal";
-      if (shownFor !== round.asked) {
-        shownFor = round.asked;
-        $("true-answer").value = round.answer === null ? "" : round.answer;
-      }
-      drawStats(view);
-      drawRanges(view);
-    }
-    drawBoard(view);
-    drawHistory(view);
-  }
-
-  api("GET", at("")).then(body => draw(body.view)).catch(e => fail(e.message));
-  watch(at("/events"), draw);
-}
-
-// ------------------------------------------------------------------- join
-
-function join(key) {
-  show("join");
-  const kept = localStorage.getItem("estimate:" + key);
-  if (kept) { location.replace("/p/" + kept); return; }
-
-  api("GET", `/api/j/${encodeURIComponent(key)}`).then(body => {
-    $("join-count").textContent = body.players === 0
-      ? "You are the first one in."
-      : plural(body.players, "person", "people") + " already in.";
-  }).catch(e => fail(e.message));
-
-  $("name-form").addEventListener("submit", async event => {
-    event.preventDefault();
-    try {
-      const body = await api("POST", `/api/j/${encodeURIComponent(key)}`, {name: $("name").value});
-      localStorage.setItem("estimate:" + key, body.player);
-      location.href = "/p/" + body.player;
-    } catch (e) { fail(e.message); }
-  });
-}
-
-// ----------------------------------------------------------------- player
-
-function player(key) {
-  show("player");
-  const at = path => `/api/p/${encodeURIComponent(key)}${path}`;
-  let filledFor = null;
-
-  $("bounds-form").addEventListener("submit", async event => {
-    event.preventDefault();
-    const low = $("low").valueAsNumber;
-    const high = $("high").valueAsNumber;
-    if (!isFinite(low) || !isFinite(high)) { fail("Both bounds need a number."); return; }
-    try {
-      const body = await api("PUT", at("/bounds"), {low, high});
-      draw(body.view);
-      fail("");
-    } catch (e) { fail(e.message); }
-  });
-
-  function drawResult(view) {
-    const round = view.round;
-    if (!round || !round.revealed) { $("p-result").innerHTML = ""; return; }
-    const stats = view.stats;
-    const verdict = view.hit === null || view.hit === undefined ? ""
-      : view.hit
-        ? `<p class="hit" style="margin-top:12px">Your range contained it.</p>`
-        : `<p class="miss" style="margin-top:12px">Your range missed it.</p>`;
-    const answer = round.answer === null || round.answer === undefined
-      ? `<p class="note" style="margin-top:12px">The host has not entered the answer.</p>`
-      : `<p class="eyebrow">The answer</p><p class="big">${withUnit(round.answer)}</p>${verdict}`;
-    const room = !stats ? "" : `<div class="facts">
-        <div class="fact"><span>The middle of the room</span><b>${range(stats.median_low, stats.median_high)}</b></div>
-        <div class="fact"><span>On average</span><b>${range(stats.mean_low, stats.mean_high)}</b></div>
-        <div class="fact"><span>From</span><b>${withUnit(stats.lowest.value)}<small>${esc(stats.lowest.name)}</small></b></div>
-        <div class="fact"><span>To</span><b>${withUnit(stats.highest.value)}<small>${esc(stats.highest.name)}</small></b></div>
-        <div class="fact"><span>Tightest range</span><b>${span(stats.tightest.value)}<small>${esc(stats.tightest.name)}</small></b></div>
-        ${stats.hits === null || stats.hits === undefined ? "" :
-          `<div class="fact"><span>Contained it</span><b>${stats.hits} of ${stats.n}<small>at ${view.confidence}%, about ${Math.round(stats.n * view.confidence / 100)} should</small></b></div>`}
-      </div>`;
-    const yours = !view.score || !view.score.scored ? "" :
-      `<p class="note" style="margin-top:16px">Your evening: ${view.score.hits} of
-        ${view.score.scored} contained the answer, and ${view.score.tighter} of
-        ${view.score.answered} ranges came in tighter than the room's.</p>`;
-    $("p-result").innerHTML = `<div class="panel">${answer}${room}${yours}</div>`;
-  }
-
-  function draw(view) {
-    unit = view.round ? view.round.unit : "";
-    $("you").innerHTML = `<span class="dot"></span> You are ${esc(view.name)}`;
-    $("where").textContent = `${view.confidence}% sure`;
-    const round = view.round;
-    if (!round) {
-      $("p-state").textContent = "Waiting";
-      $("p-question").textContent = "Waiting for the first question";
-      $("p-unit").textContent = "";
-      $("bounds-form").hidden = true;
-      $("p-closed").hidden = true;
-      $("p-result").innerHTML = "";
-      return;
-    }
-    $("p-state").textContent = round.revealed ? "Revealed" : round.open ? "Your range" : "Closed";
-    $("p-question").textContent = round.question;
-    $("p-unit").textContent = round.unit
-      ? `Answer in ${round.unit}. Give the range you are ${view.confidence}% sure about.`
-      : `Give the range you are ${view.confidence}% sure about.`;
-    $("bounds-form").hidden = !round.open;
-    $("p-closed").hidden = round.open;
-    if (!round.open) {
-      $("p-closed").textContent = view.mine
-        ? `Your range: ${range(view.mine.low, view.mine.high)}.`
-        : "You did not answer this one.";
-    }
-    if (filledFor !== round.asked) {
-      filledFor = round.asked;
-      $("low").value = view.mine ? view.mine.low : "";
-      $("high").value = view.mine ? view.mine.high : "";
-    }
-    $("mine").textContent = view.mine
-      ? `Sent: ${range(view.mine.low, view.mine.high)}. You can change it until the host closes the question.`
-      : `${view.submitted} of ${plural(view.players, "person", "people")} have answered.`;
-    drawResult(view);
-  }
-
-  api("GET", at("")).then(body => draw(body.view)).catch(e => fail(e.message));
-  watch(at("/events"), draw);
-}
-
-const path = location.pathname.split("/").filter(part => part !== "");
-if (path.length === 2 && path[0] === "h") host(path[1]);
-else if (path.length === 2 && path[0] === "j") join(path[1]);
-else if (path.length === 2 && path[0] === "p") player(path[1]);
-else start();
-</script>
+<script src="/app.js"></script>
 </body>
 </html>

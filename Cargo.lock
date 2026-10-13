@@ -79,6 +79,7 @@ dependencies = [
  "axum",
  "http-body-util",
  "rooms",
+ "rooms-client",
  "serde",
  "serde_json",
  "tokio",
@@ -345,7 +346,7 @@ dependencies = [
 [[package]]
 name = "rooms"
 version = "0.1.0"
-source = "git+https://github.com/float3/rooms#e44d16cc9d5423b93f69b296c26ac7298608a74c"
+source = "git+https://github.com/float3/rooms#e34a3f157ae2988d5a5c1e2fe5cd5d08424677f7"
 dependencies = [
  "axum",
  "qrcode",
@@ -355,6 +356,11 @@ dependencies = [
  "tokio",
  "tokio-stream",
 ]
+
+[[package]]
+name = "rooms-client"
+version = "0.1.0"
+source = "git+https://github.com/float3/rooms#e34a3f157ae2988d5a5c1e2fe5cd5d08424677f7"
 
 [[package]]
 name = "ryu"

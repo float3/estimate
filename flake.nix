@@ -20,6 +20,8 @@
         pname = "estimate";
         version = "0.1.0";
         src = lib.cleanSource self;
+        # The page is TypeScript; the build script compiles it with these.
+        nativeBuildInputs = with pkgs; [esbuild typescript];
         cargoLock = {
           lockFile = ./Cargo.lock;
           # rooms is a git dependency, so nix needs its hash as well as
@@ -27,7 +29,8 @@
           # Cargo.lock, run
           #   nix run nixpkgs#nix-prefetch-git -- --url https://github.com/float3/rooms --rev <rev>
           # and put the hash it prints here.
-          outputHashes."rooms-0.1.0" = "sha256-pYDcX0k7+Jo6j+mCRh0m8lXfCwZBbyE+ULvjT6aEsXk=";
+          outputHashes."rooms-0.1.0" = "sha256-bXsEGebQmhKGJjYAA7IZtuB09jgZLqAByq0oiC3VrVU=";
+          outputHashes."rooms-client-0.1.0" = "sha256-bXsEGebQmhKGJjYAA7IZtuB09jgZLqAByq0oiC3VrVU=";
         };
         meta.mainProgram = "estimate";
       };
@@ -35,7 +38,7 @@
 
     devShells = forAllSystems (pkgs: {
       default = pkgs.mkShell {
-        packages = with pkgs; [cargo clippy rustc rustfmt];
+        packages = with pkgs; [cargo clippy rustc rustfmt esbuild typescript];
       };
     });
 

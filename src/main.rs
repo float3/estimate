@@ -25,10 +25,14 @@ use axum::{
 use rooms::{Rooms, http, now_ms, qr};
 use serde::Deserialize;
 
-use game::Game;
+use game::{Game, Stage};
 
 const INDEX: &str = include_str!("../static/index.html");
 const ICON: &str = include_str!("../static/icon.svg");
+/// The page's own half, compiled from the TypeScript in `client/` by the
+/// build script. Nothing here is written in JavaScript.
+const APP_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/app.js"));
+const APP_CSS: &str = include_str!(concat!(env!("OUT_DIR"), "/app.css"));
 
 /// How many rooms at once. A cap because anyone can open one.
 const MAX_ROOMS: usize = 2000;
@@ -74,8 +78,8 @@ struct Asked {
 }
 
 #[derive(Deserialize)]
-struct Opened {
-    open: bool,
+struct Staged {
+    stage: Stage,
 }
 
 #[derive(Deserialize)]
@@ -138,12 +142,14 @@ async fn ask(
     .await
 }
 
-async fn set_open(
+/// Moves the question on: to the discussion, to the second ranges, or
+/// back a step for somebody who missed one.
+async fn set_stage(
     State(rooms): State<Shared>,
     Path(key): Path<String>,
-    Json(opened): Json<Opened>,
+    Json(staged): Json<Staged>,
 ) -> Response {
-    act(&rooms, &key, |game, _| game.set_open(opened.open)).await
+    act(&rooms, &key, |game, _| game.move_to(staged.stage)).await
 }
 
 async fn set_answer(
@@ -269,6 +275,30 @@ async fn page() -> Html<&'static str> {
     Html(INDEX)
 }
 
+/// The compiled page. Named without a hash, so it is revalidated rather
+/// than cached: a room is opened once and the page is small.
+async fn script() -> Response {
+    (
+        [
+            (header::CONTENT_TYPE, "text/javascript; charset=utf-8"),
+            (header::CACHE_CONTROL, "no-cache"),
+        ],
+        APP_JS,
+    )
+        .into_response()
+}
+
+async fn stylesheet() -> Response {
+    (
+        [
+            (header::CONTENT_TYPE, "text/css; charset=utf-8"),
+            (header::CACHE_CONTROL, "no-cache"),
+        ],
+        APP_CSS,
+    )
+        .into_response()
+}
+
 async fn icon() -> Response {
     (
         [
@@ -288,13 +318,15 @@ fn router(rooms: Shared) -> Router {
         .route("/j/{key}", get(page))
         .route("/p/{key}", get(page))
         .route("/icon.svg", get(icon))
+        .route("/app.js", get(script))
+        .route("/app.css", get(stylesheet))
         .route("/api/time", get(time))
         .route("/api/qr", post(qr_code))
         .route("/api/rooms", post(open_room))
         .route("/api/h/{key}", get(host_state))
         .route("/api/h/{key}/events", get(host_events))
         .route("/api/h/{key}/ask", post(ask))
-        .route("/api/h/{key}/open", put(set_open))
+        .route("/api/h/{key}/stage", put(set_stage))
         .route("/api/h/{key}/answer", put(set_answer))
         .route("/api/h/{key}/reveal", post(reveal))
         .route("/api/h/{key}/confidence", put(set_confidence))
@@ -412,16 +444,16 @@ mod tests {
         )
         .await["view"]
             .clone();
-        assert_eq!(view["mine"]["low"], 2000.0);
+        assert_eq!(view["mine_before"]["low"], 2000.0);
         assert_eq!(view["round"]["question"], "How many lamps?");
         assert_eq!(view["submitted"], 1);
 
         let view = ok(&app, "GET", &format!("/api/h/{host}"), None).await["view"].clone();
-        assert_eq!(view["stats"]["n"], 1);
-        assert_eq!(view["stats"]["median_low"], 2000.0);
-        assert_eq!(view["stats"]["hits"], 0);
+        assert_eq!(view["standing"]["n"], 1);
+        assert_eq!(view["standing"]["median_low"], 2000.0);
+        assert_eq!(view["standing"]["hits"], 0);
         assert_eq!(view["answers"][0]["name"], "Ada");
-        assert_eq!(view["players"][0]["answered"], true);
+        assert_eq!(view["players"][0]["first"], true);
 
         let _ = std::fs::remove_file(&path);
     }
@@ -448,7 +480,70 @@ mod tests {
         let after = ok(&app, "GET", &format!("/api/p/{player}"), None).await["view"].clone();
         assert_eq!(after["round"]["answer"], 1234567.0);
         assert_eq!(after["hit"], true);
-        assert_eq!(after["stats"]["n"], 1);
+        assert_eq!(after["standing"]["n"], 1);
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn the_room_answers_twice_and_the_change_is_counted() {
+        let (app, path) = app("twice");
+        let (host, player) = ready(&app).await;
+        ok(
+            &app,
+            "PUT",
+            &format!("/api/p/{player}/bounds"),
+            Some(json!({"low": 0, "high": 10})),
+        )
+        .await;
+
+        ok(
+            &app,
+            "PUT",
+            &format!("/api/h/{host}/stage"),
+            Some(json!({"stage": "discussion"})),
+        )
+        .await;
+        let (status, body) = call(
+            &app,
+            "PUT",
+            &format!("/api/p/{player}/bounds"),
+            Some(json!({"low": 1, "high": 2})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(body["error"], "The room is talking this one over.");
+
+        ok(
+            &app,
+            "PUT",
+            &format!("/api/h/{host}/stage"),
+            Some(json!({"stage": "second"})),
+        )
+        .await;
+        let view = ok(
+            &app,
+            "PUT",
+            &format!("/api/p/{player}/bounds"),
+            Some(json!({"low": 1000000, "high": 2000000})),
+        )
+        .await["view"]
+            .clone();
+        assert_eq!(view["mine_before"]["high"], 10.0, "the first one stands");
+        assert_eq!(view["mine_after"]["high"], 2000000.0);
+
+        let view = ok(&app, "POST", &format!("/api/h/{host}/reveal"), None).await["view"].clone();
+        assert_eq!(view["shift"]["n"], 1);
+        assert_eq!(view["shift"]["moved"], 1);
+        assert_eq!(view["shift"]["hits_before"], 0);
+        assert_eq!(view["shift"]["hits_after"], 1, "1234567 is in the second");
+        assert_eq!(view["shift"]["towards"], 1);
+        assert_eq!(view["scores"][0]["changed_mind"], 1);
+
+        let mine = ok(&app, "GET", &format!("/api/p/{player}"), None).await["view"].clone();
+        assert_eq!(mine["mine_changed"]["after"]["low"], 1000000.0);
+        assert_eq!(mine["hit"], true);
+        assert_eq!(mine["hit_before"], false);
 
         let _ = std::fs::remove_file(&path);
     }
@@ -520,7 +615,7 @@ mod tests {
 
         let again = router(Rooms::load(&path, 4));
         let view = ok(&again, "GET", &format!("/api/h/{host}"), None).await["view"].clone();
-        assert_eq!(view["stats"]["n"], 1, "the room came back off disk");
+        assert_eq!(view["standing"]["n"], 1, "the room came back off disk");
         assert_eq!(view["answers"][0]["name"], "Ada");
 
         let _ = std::fs::remove_file(&path);
