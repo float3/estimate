@@ -438,6 +438,15 @@ pub struct Change {
     pub hit_after: Option<bool>,
 }
 
+/// Whose first answer the rest of the room moved towards.
+#[derive(Serialize, Clone)]
+pub struct Pull {
+    pub name: String,
+    /// How much closer everybody else's midpoint got to this person's
+    /// first midpoint, averaged over the people who answered twice.
+    pub towards: f64,
+}
+
 /// What changed between the two passes.
 #[derive(Serialize)]
 pub struct Shift {
@@ -455,11 +464,20 @@ pub struct Shift {
     pub median_width_after: f64,
     /// Whose midpoint moved furthest.
     pub biggest: Option<Change>,
+    /// Whose first answer the rest of the room moved towards.
+    pub pulled: Option<Pull>,
     /// How many ranges contained the answer, in each pass.
     pub hits_before: Option<usize>,
     pub hits_after: Option<usize>,
     /// How many people ended up closer to the answer than they started.
     pub towards: Option<usize>,
+}
+
+impl Shift {
+    #[cfg(test)]
+    fn pull_name(&self) -> Option<&str> {
+        self.pulled.as_ref().map(|p| p.name.as_str())
+    }
 }
 
 impl Round {
@@ -481,6 +499,46 @@ impl Round {
                 })
             })
             .collect()
+    }
+
+    /// Whose first answer the rest of the room moved towards between the
+    /// two passes.
+    ///
+    /// For each person, take their first midpoint as a fixed point and
+    /// measure how much closer everybody else's midpoint got to it,
+    /// averaged over the people who answered twice. Their own movement is
+    /// left out of their own score, so somebody cannot score by moving.
+    /// `None` when fewer than two people answered twice, or when nobody's
+    /// first answer drew the room in.
+    fn pull(&self, players: &[Player], changes: &[Change]) -> Option<Pull> {
+        if changes.len() < 2 {
+            return None;
+        }
+        let mut best: Option<Pull> = None;
+        for player in players {
+            let Some(anchor) = self.before.get(&player.key).map(|b| b.middle()) else {
+                continue;
+            };
+            let others: Vec<&Change> = changes
+                .iter()
+                .filter(|change| change.name != player.name)
+                .collect();
+            if others.is_empty() {
+                continue;
+            }
+            let closer: f64 = others
+                .iter()
+                .map(|c| (c.before.middle() - anchor).abs() - (c.after.middle() - anchor).abs())
+                .sum::<f64>()
+                / others.len() as f64;
+            if closer > 0.0 && best.as_ref().is_none_or(|b| closer > b.towards) {
+                best = Some(Pull {
+                    name: player.name.clone(),
+                    towards: closer,
+                });
+            }
+        }
+        best
     }
 
     /// The comparison, or `None` if there was no second pass.
@@ -517,6 +575,7 @@ impl Round {
             median_width_before: widths(|c| c.before),
             median_width_after: widths(|c| c.after),
             biggest,
+            pulled: self.pull(players, &changes),
             hits_before: self
                 .answer
                 .map(|a| changes.iter().filter(|c| c.before.contains(a)).count()),
@@ -799,6 +858,58 @@ mod tests {
         assert_eq!(shift.median_middle_before, 50.0);
         assert_eq!(shift.median_width_before, 30.0, "widths 100 10 20 40");
         assert_eq!(shift.median_width_after, 35.0, "widths 50 20 30 40");
+    }
+
+    #[test]
+    fn the_room_moving_towards_one_persons_first_answer_is_counted() {
+        let (mut game, keys) = room();
+        game.ask("How many?", "", None, 1000).unwrap();
+        // Ada says 10, and the other three say 90, 92 and 94.
+        for (key, (low, high)) in
+            keys.iter()
+                .zip([(5.0, 15.0), (85.0, 95.0), (87.0, 97.0), (89.0, 99.0)])
+        {
+            game.bound(key, low, high, 1001).unwrap();
+        }
+        game.move_to(Stage::Second).unwrap();
+        // Ada holds; the other three come most of the way to her.
+        for (key, (low, high)) in
+            keys.iter()
+                .zip([(5.0, 15.0), (15.0, 25.0), (17.0, 27.0), (19.0, 29.0)])
+        {
+            game.bound(key, low, high, 1002).unwrap();
+        }
+        game.reveal().unwrap();
+
+        let shift = game.round().unwrap().shift(&game.players).unwrap();
+        let pulled = shift.pull_name();
+        assert_eq!(
+            pulled,
+            Some("Ada"),
+            "the room came to Ada, not the other way"
+        );
+        assert_eq!(shift.biggest.as_ref().map(|c| c.name.as_str()), Some("Di"));
+    }
+
+    #[test]
+    fn nobody_pulls_a_room_that_did_not_move_towards_them() {
+        let (mut game, keys) = room();
+        game.ask("How many?", "", None, 1000).unwrap();
+        game.bound(&keys[0], 0.0, 10.0, 1001).unwrap();
+        game.bound(&keys[1], 20.0, 30.0, 1001).unwrap();
+        game.move_to(Stage::Second).unwrap();
+        // Both move further apart, so neither drew the other in.
+        game.bound(&keys[0], -20.0, -10.0, 1002).unwrap();
+        game.bound(&keys[1], 40.0, 50.0, 1002).unwrap();
+        game.reveal().unwrap();
+        assert!(
+            game.round()
+                .unwrap()
+                .shift(&game.players)
+                .unwrap()
+                .pulled
+                .is_none()
+        );
     }
 
     #[test]

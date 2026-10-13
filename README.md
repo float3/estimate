@@ -42,7 +42,13 @@ The host can go back a stage for somebody who was out of the room, and can
 reveal from any stage. A question revealed straight from the first pass has
 no second pass. A two-pass question reports who changed their range, who
 narrowed and who widened, how far the median midpoint moved, whose moved
-furthest, and how many ranges contained the answer in each pass.
+furthest, whose first answer the rest of the room moved towards, and how
+many ranges contained the answer in each pass.
+
+Influence is measured per person: take their first midpoint as a fixed
+point, and average how much closer everybody else's midpoint got to it
+between the two passes. Their own movement is left out of their own
+score, so nobody scores by moving.
 
 Nothing of the first pass is shown to players during the discussion. The
 host sees it and can read out as much of it as they like; putting the

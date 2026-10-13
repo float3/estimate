@@ -64,6 +64,11 @@ interface Change {
   hit_after: boolean | null;
 }
 
+interface Pull {
+  name: string;
+  towards: number;
+}
+
 interface Shift {
   n: number;
   moved: number;
@@ -74,6 +79,7 @@ interface Shift {
   median_width_before: number;
   median_width_after: number;
   biggest: Change | null;
+  pulled: Pull | null;
   hits_before: number | null;
   hits_after: number | null;
   towards: number | null;
@@ -232,6 +238,12 @@ function shiftHtml(shift: Shift): string {
     rows.push([
       "Moved furthest",
       `<b>${esc(shift.biggest.name)}<small>${ranged(shift.biggest.before)} → ${ranged(shift.biggest.after)}</small></b>`,
+    ]);
+  }
+  if (shift.pulled) {
+    rows.push([
+      "The room moved towards",
+      `<b>${esc(shift.pulled.name)}<small>everyone else ended ${withUnit(shift.pulled.towards)} closer to their first answer</small></b>`,
     ]);
   }
   if (shift.hits_before !== null && shift.hits_after !== null) {
