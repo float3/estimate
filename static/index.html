@@ -22,38 +22,22 @@
   <section id="screen-start" hidden>
     <p class="eyebrow">For a room of people</p>
     <h1>How wide is your range?</h1>
-    <p class="lead">You ask the question. Everyone gives the range they are
-      ninety per cent sure the answer falls in, from their own phone. The room
-      then discusses it and answers again, and you see who changed their
-      range, in which direction, and whether the second answers were closer
-      to the truth.</p>
+    <p class="lead">You ask a question with a number for an answer. Everyone
+      sends a lower and an upper bound from their phone, the room discusses
+      it, and everyone answers again.</p>
     <div class="actions"><button class="button primary" id="open">Open a room</button></div>
-    <p class="note" id="start-note">There is nothing to install and nobody
-      signs up. The link is the only key, so keep the host link: it is the only
-      way back into the room.</p>
     <div class="prose">
       <h2>How it goes</h2>
       <ol>
-        <li>You open a room and put the join link on the wall. Everyone scans it
-          and gives a name.</li>
-        <li>You ask a question with a number for an answer. How many lamp posts
-          are there in Munich? When was the first one lit?</li>
-        <li>Everyone sends a lower and an upper bound from their phone.</li>
-        <li>You stop taking ranges, and the room talks it over.</li>
-        <li>You ask for a second range. Each phone starts from that player's
-          first answer, so submitting it unchanged counts as an answer.</li>
-        <li>You reveal. Everybody sees the answer, the room's numbers, and
-          how far the discussion moved them.</li>
+        <li>Everyone scans the join link and gives a name.</li>
+        <li>You ask a question. Everyone sends the range they are ninety per
+          cent sure the answer falls in.</li>
+        <li>You stop taking ranges, and the room discusses it.</li>
+        <li>You ask again. Each phone starts from that player's first
+          answer.</li>
+        <li>You reveal: the answer, the room's numbers, and what changed
+          between the two passes.</li>
       </ol>
-      <h2>Why ranges, and why twice</h2>
-      <p>A single guess is almost always wrong, and knowing it is wrong tells
-        you nothing. A range is a claim about how much you know: if you are
-        ninety per cent sure, then nine of your ten ranges ought to contain the
-        answer. Too few and you are overconfident, which is the usual case. Ten
-        out of ten and your ranges are wider than they need to be.</p>
-      <p>Asking twice measures something else. The difference between your two
-        ranges is how much the discussion moved you, and the room can see
-        whether the second answers were closer to the truth than the first.</p>
     </div>
   </section>
 
@@ -67,8 +51,7 @@
       <fieldset>
         <legend>How sure everybody is meant to be</legend>
         <div class="chips" id="levels"></div>
-        <p class="note">Keep this the same all evening, or the hit rate stops
-          meaning anything.</p>
+        <p class="note">Use the same level all evening.</p>
       </fieldset>
     </div>
 

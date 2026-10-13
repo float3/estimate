@@ -20,15 +20,12 @@ sees whether the second answers were closer to the truth.
 
 Built on [rooms](https://github.com/float3/rooms).
 
-## Why ranges
+## What it reports
 
-A single guess is almost always wrong, and knowing that it was wrong tells
-you nothing. A range is a claim about how much you know: at ninety per
-cent, nine in ten of your ranges should contain the answer. Fewer than that
-means you are overconfident, which is the usual result. Ten out of ten
-means your ranges are wider than they need to be. The scoreboard therefore
-counts how often somebody was narrower than the room as well as how often
-they were right.
+A range is a claim about how much you know: at ninety per cent, nine in ten
+of your ranges should contain the answer. The scoreboard counts how often
+somebody was right and how often they were narrower than the room, so that
+a hit rate cannot be bought with very wide ranges.
 
 ## The two passes
 
