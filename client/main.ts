@@ -128,7 +128,6 @@ interface Past {
 interface HostView {
   join: string;
   confidence: number;
-  tell_on_send: boolean;
   players: Who[];
   round: Asked | null;
   before: Stats | null;
@@ -144,7 +143,6 @@ interface HostView {
 interface PlayerView {
   name: string;
   confidence: number;
-  tell_on_send: boolean;
   round: Asked | null;
   mine_before: Bound | null;
   mine_after: Bound | null;
@@ -301,13 +299,6 @@ function host(key: string): void {
     fail("");
   });
 
-  byId<HTMLInputElement>("tell-on-send").addEventListener("change", () => {
-    const on = byId<HTMLInputElement>("tell-on-send").checked;
-    api("PUT", at("/tell-on-send"), { on })
-      .then(() => fail(""))
-      .catch((e: unknown) => fail(e instanceof Error ? e.message : String(e)));
-  });
-
   onSubmit("answer-form", async () => {
     await api("PUT", at("/answer"), { answer: value("true-answer") });
     fail("");
@@ -341,8 +332,6 @@ function host(key: string): void {
       qrInto("join-qr", next);
     }
     byId("room").classList.toggle("tight", view.players.length > 0);
-    const tell = byId<HTMLInputElement>("tell-on-send");
-    if (tell !== document.activeElement) tell.checked = view.tell_on_send;
     html(
       "who",
       view.players.length === 0
@@ -611,11 +600,7 @@ function player(key: string): void {
 
   function resultHtml(view: PlayerView): string {
     const round = view.round;
-    // The answer can arrive before the reveal, when the room asked to be
-    // told on sending. The room's own numbers still wait.
-    if (!round || (round.stage !== "revealed" && round.answer === null)) {
-      return "";
-    }
+    if (!round || round.stage !== "revealed") return "";
     const verdict =
       view.hit === null
         ? ""

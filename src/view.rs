@@ -51,7 +51,6 @@ pub struct Past<'a> {
 pub struct Host<'a> {
     join: &'a str,
     confidence: u8,
-    tell_on_send: bool,
     players: Vec<Who<'a>>,
     round: Option<Asked<'a>>,
     /// The first pass, the second pass, and everybody's final ranges.
@@ -72,8 +71,6 @@ pub struct Host<'a> {
 pub struct Player<'a> {
     name: &'a str,
     confidence: u8,
-    /// Whether this room shows the answer on sending the second range.
-    tell_on_send: bool,
     round: Option<Asked<'a>>,
     /// This player's two ranges.
     mine_before: Option<Bound>,
@@ -94,15 +91,15 @@ pub struct Player<'a> {
 }
 
 impl Round {
-    /// `with_answer` is for the host, who is sent the answer as soon as
-    /// there is one, and for a player once the question has been revealed
-    /// or the room has chosen to tell them on sending their second range.
-    fn asked(&self, with_answer: bool) -> Asked<'_> {
+    fn asked(&self, to_host: bool) -> Asked<'_> {
+        let revealed = self.stage == Stage::Revealed;
         Asked {
             question: &self.question,
             unit: &self.unit,
             stage: self.stage,
-            answer: self.answer.filter(|_| with_answer),
+            // The host is sent the answer as soon as there is one.
+            // Everybody else is sent it after the reveal.
+            answer: self.answer.filter(|_| to_host || revealed),
             asked: self.asked,
         }
     }
@@ -147,7 +144,6 @@ pub fn host(game: &Game) -> Host<'_> {
     Host {
         join: &game.join,
         confidence: game.confidence,
-        tell_on_send: game.tell_on_send,
         players: game
             .players
             .iter()
@@ -195,21 +191,12 @@ pub fn player<'a>(game: &'a Game, key: &str) -> Option<Player<'a>> {
     let shown = round.filter(|_| revealed);
     let mine_before = round.and_then(|r| r.before.get(key)).copied();
     let mine_after = round.and_then(|r| r.after.get(key)).copied();
-    // Quantified Intuitions tells you the answer the moment you have
-    // committed to a number. A room can ask for that; what it does not get
-    // early is anybody else's range or the room's numbers.
-    let told_early = game.tell_on_send
-        && round.is_some_and(|r| r.stage == Stage::Second)
-        && mine_after.is_some();
-    let answer = round
-        .and_then(|r| r.answer)
-        .filter(|_| revealed || told_early);
+    let answer = round.and_then(|r| r.answer).filter(|_| revealed);
     let standing = round.and_then(|r| r.standing(key));
     Some(Player {
         name: &player.name,
         confidence: game.confidence,
-        tell_on_send: game.tell_on_send,
-        round: round.map(|round| round.asked(revealed || told_early)),
+        round: round.map(|round| round.asked(false)),
         mine_before,
         mine_after,
         submitted: round.map_or(0, |r| r.in_so_far(&game.players)),
@@ -303,40 +290,6 @@ mod tests {
         assert!(view.standing.is_some());
         assert_eq!(view.hit, Some(false), "1 to 2 does not contain 1234567");
         assert_eq!(view.score.map(|s| s.scored), Some(1));
-    }
-
-    /// With the setting on, the answer arrives with the second range and
-    /// nothing else does: not the room's numbers, not anybody else's range.
-    #[test]
-    fn a_room_can_ask_to_be_told_the_answer_on_sending() {
-        let (mut game, key) = room();
-        let other = game.join("Bo", 1000).unwrap();
-        game.set_tell_on_send(true);
-        game.move_to(Stage::Second).unwrap();
-        game.bound(&other, 500.0, 600.0, 1002).unwrap();
-
-        let waiting = player(&game, &key).unwrap();
-        assert!(
-            waiting.round.as_ref().and_then(|r| r.answer).is_none(),
-            "nothing until this player has sent one"
-        );
-
-        game.bound(&key, 1_000_000.0, 2_000_000.0, 1002).unwrap();
-        let told = player(&game, &key).unwrap();
-        assert_eq!(told.round.as_ref().and_then(|r| r.answer), Some(ANSWER));
-        assert_eq!(told.hit, Some(true));
-        assert!(told.standing.is_none(), "the room's numbers still wait");
-        assert!(told.shift.is_none());
-        assert!(!json(&told).contains("Bo"), "nor anybody else's range");
-    }
-
-    #[test]
-    fn the_answer_still_waits_for_the_reveal_by_default() {
-        let (mut game, key) = room();
-        game.move_to(Stage::Second).unwrap();
-        game.bound(&key, 1.0, 2.0, 1002).unwrap();
-        let view = player(&game, &key).unwrap();
-        assert!(view.round.as_ref().and_then(|r| r.answer).is_none());
     }
 
     #[test]
