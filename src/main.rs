@@ -12,38 +12,32 @@
 mod game;
 mod view;
 
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use std::{path::PathBuf, sync::Arc};
 
 use axum::{
     Json, Router,
-    body::Bytes,
     extract::{Path, State},
-    http::{StatusCode, header},
-    response::{Html, IntoResponse, Response},
+    response::{IntoResponse, Response},
     routing::{get, post, put},
 };
-use rooms::{Rooms, http, now_ms, qr};
+use rooms::{Rooms, http, now_ms, site};
 use serde::Deserialize;
 
 use game::{Game, Stage};
 
-const INDEX: &str = include_str!("../static/index.html");
-const ICON: &str = include_str!("../static/icon.svg");
-/// The page's own half, compiled from the TypeScript in `client/` by the
-/// build script. Nothing here is written in JavaScript.
-const APP_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/app.js"));
-const APP_CSS: &str = include_str!(concat!(env!("OUT_DIR"), "/app.css"));
+/// The page and its files. The script and stylesheet are compiled from
+/// the TypeScript and CSS in `client/` by the build script.
+const FILES: site::Files = site::Files {
+    page: include_str!("../static/index.html"),
+    icon: include_str!("../static/icon.svg"),
+    script: include_str!(concat!(env!("OUT_DIR"), "/app.js")),
+    stylesheet: include_str!(concat!(env!("OUT_DIR"), "/app.css")),
+};
 
 /// How many rooms at once. Limited because anyone can open one.
 const MAX_ROOMS: usize = 2000;
-/// How often to look for rooms nobody has opened in a day.
-const SWEEP: Duration = Duration::from_secs(5 * 60);
 
 type Shared = Arc<Rooms<Game>>;
-
-fn refused(message: &str) -> Response {
-    http::error(StatusCode::CONFLICT, message)
-}
 
 /// Applies a host action to the room and returns the host's view.
 ///
@@ -54,16 +48,10 @@ async fn act(
     key: &str,
     action: impl FnOnce(&mut Game, u64) -> Result<(), &'static str>,
 ) -> Response {
-    let done = rooms
-        .with(key, |game, now| {
-            action(game, now).map(|()| http::envelope(now, &view::host(game)))
-        })
-        .await;
-    match done {
-        None => http::gone(),
-        Some(Err(message)) => refused(message),
-        Some(Ok(body)) => http::json(body),
-    }
+    site::act(rooms, key, action, |game, now| {
+        http::envelope(now, &view::host(game))
+    })
+    .await
 }
 
 #[derive(Deserialize)]
@@ -108,14 +96,7 @@ struct Bounds {
 
 async fn open_room(State(rooms): State<Shared>) -> Response {
     let now = now_ms();
-    let Some(host) = rooms.create(|_| Game::new(now)).await else {
-        return http::error(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "Too many rooms are open at once. Try again in a few minutes.",
-        );
-    };
-    let join = rooms.read(&host, |game, _| game.join.clone()).await;
-    Json(serde_json::json!({ "host": host, "join": join })).into_response()
+    site::open(&rooms, |_| Game::new(now), |game| game.join.clone()).await
 }
 
 async fn host_state(State(rooms): State<Shared>, Path(key): Path<String>) -> Response {
@@ -182,21 +163,12 @@ async fn set_confidence(
     .await
 }
 
-/// A player's link carries the room's join key rather than the room's own
-/// key, so the room has to be found by it.
-async fn room_with_join(rooms: &Rooms<Game>, join: &str) -> Option<String> {
-    let join = join.to_string();
-    rooms
-        .find(move |key, game| (game.join == join).then(|| key.to_string()))
-        .await
-}
-
 async fn join(
     State(rooms): State<Shared>,
     Path(join): Path<String>,
     Json(named): Json<Named>,
 ) -> Response {
-    let Some(key) = room_with_join(&rooms, &join).await else {
+    let Some(key) = rooms.key_where(|game| game.join == join).await else {
         return http::gone();
     };
     match rooms
@@ -204,7 +176,7 @@ async fn join(
         .await
     {
         None => http::gone(),
-        Some(Err(message)) => refused(message),
+        Some(Err(message)) => http::refused(message),
         Some(Ok(player)) => Json(serde_json::json!({ "player": player })).into_response(),
     }
 }
@@ -212,7 +184,7 @@ async fn join(
 /// How many people are already in, which is what the join page shows
 /// before anyone gives a name.
 async fn whose(State(rooms): State<Shared>, Path(join): Path<String>) -> Response {
-    let Some(key) = room_with_join(&rooms, &join).await else {
+    let Some(key) = rooms.key_where(|game| game.join == join).await else {
         return http::gone();
     };
     match rooms.read(&key, |game, _| game.players.len()).await {
@@ -258,76 +230,14 @@ async fn bounds(
         .await;
     match done {
         None => http::gone(),
-        Some(Err(message)) => refused(message),
+        Some(Err(message)) => http::refused(message),
         Some(Ok(body)) => http::json(body),
     }
 }
 
-/// A link as a QR code. The page sends the link it wants, rather than
-/// this guessing at the host name it is served under.
-async fn qr_code(body: Bytes) -> Response {
-    match std::str::from_utf8(&body) {
-        Ok(link) => qr::response(link),
-        Err(_) => http::error(StatusCode::BAD_REQUEST, "That is not a link."),
-    }
-}
-
-/// The server's clock, which the pages run their countdowns off.
-async fn time() -> Response {
-    http::json(format!("{{\"now\":{}}}", now_ms()))
-}
-
-async fn page() -> Html<&'static str> {
-    Html(INDEX)
-}
-
-/// The compiled page. The name has no hash in it, so it is revalidated
-/// rather than cached; the file is small and a room is opened once.
-async fn script() -> Response {
-    (
-        [
-            (header::CONTENT_TYPE, "text/javascript; charset=utf-8"),
-            (header::CACHE_CONTROL, "no-cache"),
-        ],
-        APP_JS,
-    )
-        .into_response()
-}
-
-async fn stylesheet() -> Response {
-    (
-        [
-            (header::CONTENT_TYPE, "text/css; charset=utf-8"),
-            (header::CACHE_CONTROL, "no-cache"),
-        ],
-        APP_CSS,
-    )
-        .into_response()
-}
-
-async fn icon() -> Response {
-    (
-        [
-            (header::CONTENT_TYPE, "image/svg+xml"),
-            (header::CACHE_CONTROL, "max-age=3600"),
-        ],
-        ICON,
-    )
-        .into_response()
-}
-
 fn router(rooms: Shared) -> Router {
     Router::new()
-        // One page, which picks its screen from the path.
-        .route("/", get(page))
-        .route("/h/{key}", get(page))
-        .route("/j/{key}", get(page))
-        .route("/p/{key}", get(page))
-        .route("/icon.svg", get(icon))
-        .route("/app.js", get(script))
-        .route("/app.css", get(stylesheet))
-        .route("/api/time", get(time))
-        .route("/api/qr", post(qr_code))
+        .merge(site::routes(FILES))
         .route("/api/rooms", post(open_room))
         .route("/api/h/{key}", get(host_state))
         .route("/api/h/{key}/events", get(host_events))
@@ -349,21 +259,18 @@ async fn main() {
     let state = std::env::var("ESTIMATE_STATE").unwrap_or_else(|_| "rooms.json".into());
 
     let rooms: Shared = Rooms::load(PathBuf::from(state), MAX_ROOMS);
-    tokio::spawn(rooms.clone().sweep(SWEEP));
+    tokio::spawn(rooms.clone().sweep(rooms::SWEEP));
 
-    // Under systemd the port is held by a socket unit and passed in, so
-    // the service itself runs with no network of its own.
-    let listener = rooms::listen(&addr).await;
-    println!("{}", rooms::where_it_listens(&listener));
-    axum::serve(listener, router(rooms))
-        .await
-        .expect("the server stopped");
+    rooms::serve(&addr, router(rooms)).await;
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::{body::Body, http::Request};
+    use axum::{
+        body::Body,
+        http::{Request, StatusCode, header},
+    };
     use http_body_util::BodyExt;
     use serde_json::{Value, json};
     use tower::ServiceExt;
