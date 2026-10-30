@@ -433,17 +433,18 @@ function host(key: string): void {
     html(
       "board",
       `<h3>The evening so far</h3><div class="scroll"><table><thead><tr>
-        <th>Who</th><th>Answered</th>${scored ? "<th>In</th><th>Rate</th>" : ""}<th>Tighter</th><th>Changed</th>
+        <th>Who</th><th>Answered</th>${scored ? "<th>In</th>" : ""}<th>Tighter</th><th>Changed</th>
       </tr></thead><tbody>${view.scores
         .map(
           (score) => `<tr>
           <td>${esc(score.name)}</td><td>${score.answered}</td>
-          ${scored ? `<td>${score.hits} of ${score.scored}</td><td>${score.scored ? Math.round((100 * score.hits) / score.scored) + "%" : "—"}</td>` : ""}
+          ${scored ? `<td>${score.scored ? `${score.hits}/${score.scored} · ${Math.round((100 * score.hits) / score.scored)}%` : "—"}</td>` : ""}
           <td>${score.tighter}</td><td>${score.changed_mind}</td>
         </tr>`,
         )
         .join("")}</tbody></table></div>
-      <p class="note">“Tighter” counts the questions where the range was
+      <p class="note">“In” counts the ranges that contained the answer.
+        “Tighter” counts the questions where the range was
         narrower than the room's median range. “Changed” counts the questions
         where the second range differed from the first.</p>`,
     );
@@ -510,10 +511,9 @@ function host(key: string): void {
     drawHistory(view);
   }
 
-  api<{ view: HostView }>("GET", at(""))
-    .then((body) => draw(body.view))
-    .catch((e: unknown) => fail(e instanceof Error ? e.message : String(e)));
-  watch<HostView>(at("/events"), draw);
+  // Fetches the room once, then keeps it up to date from its event
+  // stream; `watch` adds the "/events" itself.
+  watch<HostView>(at(""), draw);
 }
 
 // ------------------------------------------------------------------- join
@@ -692,9 +692,9 @@ function player(key: string): void {
     const mine = round.stage === "second" ? view.mine_after : view.mine_before;
     text(
       "mine",
-      mine
-        ? `Sent: ${ranged(mine)}. You can change it until the host moves on.`
-        : `${view.submitted} of ${plural(view.players, "person", "people")} have answered.`,
+      `${
+        mine ? `Sent: ${ranged(mine)}. You can change it until the host moves on. ` : ""
+      }${view.submitted} of ${plural(view.players, "person", "people")} have answered.`,
     );
     if (round.stage === "second" && view.mine_before) {
       text(
@@ -707,10 +707,9 @@ function player(key: string): void {
     html("p-result", resultHtml(view));
   }
 
-  api<{ view: PlayerView }>("GET", at(""))
-    .then((body) => draw(body.view))
-    .catch((e: unknown) => fail(e instanceof Error ? e.message : String(e)));
-  watch<PlayerView>(at("/events"), draw);
+  // Fetches the room once, then keeps it up to date from its event
+  // stream; `watch` adds the "/events" itself.
+  watch<PlayerView>(at(""), draw);
 }
 
 const where = route();

@@ -40,3 +40,28 @@ summary {
 h3 {
   margin-top: 24px;
 }
+
+/* The scoreboard has six columns and the ranges have numbers in the
+ * hundred thousands. On a phone they are squeezed to fit rather than
+ * scrolled sideways: headings wrap, and the cells give up some padding. */
+@media (max-width: 559px) {
+  table {
+    font-size: 0.85rem;
+  }
+
+  th,
+  td {
+    padding: 8px 4px;
+  }
+
+  thead th {
+    white-space: normal;
+    letter-spacing: 0.02em;
+    font-size: 0.65rem;
+    vertical-align: bottom;
+  }
+
+  td:first-child {
+    overflow-wrap: anywhere;
+  }
+}
