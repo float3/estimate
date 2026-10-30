@@ -84,6 +84,10 @@ struct Staged {
 #[derive(Deserialize)]
 struct Answered {
     answer: Option<f64>,
+    /// Which question, by its place in the room's list, oldest first.
+    /// Missing means the one the room is on.
+    #[serde(default)]
+    question: Option<usize>,
 }
 
 #[derive(Deserialize)]
@@ -156,7 +160,11 @@ async fn set_answer(
     Path(key): Path<String>,
     Json(answered): Json<Answered>,
 ) -> Response {
-    act(&rooms, &key, |game, _| game.set_answer(answered.answer)).await
+    act(&rooms, &key, |game, _| match answered.question {
+        Some(index) => game.set_answer_of(index, answered.answer),
+        None => game.set_answer(answered.answer),
+    })
+    .await
 }
 
 async fn reveal(State(rooms): State<Shared>, Path(key): Path<String>) -> Response {

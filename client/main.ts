@@ -117,6 +117,7 @@ interface Score {
 }
 
 interface Past {
+  index: number;
   question: string;
   unit: string;
   answer: number | null;
@@ -450,7 +451,28 @@ function host(key: string): void {
     );
   }
 
+  // Each earlier question has a field for its answer, for one looked up
+  // afterwards. The list is only redrawn when it changes, so that a
+  // player answering the current question does not wipe what the host is
+  // typing.
+  let drawnHistory = "";
+  byId("history").addEventListener("submit", (event) => {
+    event.preventDefault();
+    const form = event.target as HTMLFormElement;
+    const field = form.querySelector("input") as HTMLInputElement;
+    const given = field.valueAsNumber;
+    api("PUT", at("/answer"), {
+      question: Number(form.dataset.index),
+      answer: isFinite(given) ? given : null,
+    })
+      .then(() => fail(""))
+      .catch((e: unknown) => fail(e instanceof Error ? e.message : String(e)));
+  });
+
   function drawHistory(view: HostView): void {
+    const drawing = JSON.stringify(view.history);
+    if (drawing === drawnHistory) return;
+    drawnHistory = drawing;
     if (view.history.length === 0) {
       html("history", "");
       return;
@@ -460,12 +482,22 @@ function host(key: string): void {
       `<h3>Asked already</h3>${view.history
         .map(
           (past) => `<div class="past">
-        <span>${esc(past.question)}</span>
-        <span>${past.answer === null ? "no answer" : esc(num(past.answer))}${
+        <p>${esc(past.question)}</p>
+        <p class="note">${
+          past.answer === null
+            ? "No answer yet."
+            : `The answer: ${esc(num(past.answer))}${past.unit ? ` ${esc(past.unit)}` : ""}.`
+        }${
           past.hits === null
             ? ""
-            : ` · ${past.hits_before === null ? "" : `${past.hits_before} → `}${past.hits} of ${past.n} in`
-        }</span>
+            : ` ${past.hits_before === null ? "" : `${past.hits_before} → `}${past.hits} of ${past.n} ranges contained it.`
+        }</p>
+        <form class="past-answer" data-index="${past.index}">
+          <input type="number" step="any" inputmode="decimal"
+            aria-label="The answer" placeholder="The answer"
+            value="${past.answer === null ? "" : past.answer}">
+          <button class="button" type="submit">${past.answer === null ? "Save" : "Change"}</button>
+        </form>
       </div>`,
         )
         .join("")}`,
@@ -494,7 +526,7 @@ function host(key: string): void {
       hide("reveal", round.stage === "revealed");
       // The answer can be entered when the question is asked, typed in
       // while it is being answered, or corrected after the reveal. It
-      // stays editable until the next question replaces it.
+      // stays editable afterwards too, under "Asked already".
       hide("answer-form", false);
       if (answerFor !== round.asked) {
         answerFor = round.asked;

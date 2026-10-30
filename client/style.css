@@ -65,3 +65,30 @@ h3 {
     overflow-wrap: anywhere;
   }
 }
+
+/* An earlier question: the question, what came of it, and a field for
+ * its answer, one under the other rather than squeezed side by side. */
+.past {
+  display: block;
+}
+
+.past p {
+  margin: 0 0 6px;
+}
+
+.past-answer {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.past-answer input {
+  flex: 1;
+  min-width: 0;
+}
+
+.past-answer .button {
+  flex: none;
+  width: auto;
+  margin: 0;
+}
