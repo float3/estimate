@@ -38,6 +38,9 @@ pub struct Asked<'a> {
 
 #[derive(Serialize)]
 pub struct Past<'a> {
+    /// Its place in the room's list of questions, oldest first, which is
+    /// how the host corrects its answer.
+    index: usize,
     question: &'a str,
     unit: &'a str,
     answer: Option<f64>,
@@ -163,11 +166,13 @@ pub fn host(game: &Game) -> Host<'_> {
         history: game
             .rounds
             .iter()
+            .enumerate()
             .rev()
             .skip(1)
-            .map(|round| {
+            .map(|(index, round)| {
                 let standing = round.standing_stats(&game.players);
                 Past {
+                    index,
                     question: &round.question,
                     unit: &round.unit,
                     answer: round.answer,

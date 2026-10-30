@@ -251,6 +251,19 @@ impl Game {
         Ok(())
     }
 
+    /// Enters or corrects the answer of a question asked earlier, by its
+    /// place in `rounds`, for a room that looked an answer up afterwards.
+    pub fn set_answer_of(&mut self, index: usize, answer: Option<f64>) -> Result<(), &'static str> {
+        if answer.is_some_and(|answer| !answer.is_finite()) {
+            return Err("That answer is not a number.");
+        }
+        self.rounds
+            .get_mut(index)
+            .ok_or("That question is not here.")?
+            .answer = answer;
+        Ok(())
+    }
+
     /// Shows everybody the answer and the room's numbers.
     pub fn reveal(&mut self) -> Result<(), &'static str> {
         self.round_mut()?.stage = Stage::Revealed;
@@ -801,10 +814,10 @@ mod tests {
     }
 
     /// The host may know the answer when they ask, look it up while the
-    /// room is arguing, or correct it after the reveal. Asking the next
-    /// question is what closes the one before it.
+    /// room is arguing, or correct it after the reveal, and enter one for
+    /// an earlier question once somebody has looked it up.
     #[test]
-    fn the_answer_can_be_set_at_any_point_until_the_next_question() {
+    fn the_answer_can_be_set_at_any_point() {
         let (mut game, keys) = room();
         game.ask("How many?", "", Some(10.0), 1000).unwrap();
         game.bound(&keys[0], 1.0, 2.0, 1001).unwrap();
@@ -821,8 +834,22 @@ mod tests {
 
         game.ask("Next", "", None, 2000).unwrap();
         game.set_answer(Some(40.0)).unwrap();
-        assert_eq!(game.rounds[0].answer, Some(30.0), "the old one is settled");
+        assert_eq!(
+            game.rounds[0].answer,
+            Some(30.0),
+            "setting the current one leaves it"
+        );
         assert_eq!(game.rounds[1].answer, Some(40.0));
+
+        game.set_answer_of(0, Some(35.0)).unwrap();
+        assert_eq!(
+            game.rounds[0].answer,
+            Some(35.0),
+            "an earlier answer looked up later can still be entered"
+        );
+        assert_eq!(game.rounds[1].answer, Some(40.0));
+        assert!(game.set_answer_of(2, Some(1.0)).is_err());
+        assert!(game.set_answer_of(0, Some(f64::NAN)).is_err());
     }
 
     #[test]

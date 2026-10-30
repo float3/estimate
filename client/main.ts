@@ -117,6 +117,7 @@ interface Score {
 }
 
 interface Past {
+  index: number;
   question: string;
   unit: string;
   answer: number | null;
@@ -433,23 +434,45 @@ function host(key: string): void {
     html(
       "board",
       `<h3>The evening so far</h3><div class="scroll"><table><thead><tr>
-        <th>Who</th><th>Answered</th>${scored ? "<th>In</th><th>Rate</th>" : ""}<th>Tighter</th><th>Changed</th>
+        <th>Who</th><th>Answered</th>${scored ? "<th>In</th>" : ""}<th>Tighter</th><th>Changed</th>
       </tr></thead><tbody>${view.scores
         .map(
           (score) => `<tr>
           <td>${esc(score.name)}</td><td>${score.answered}</td>
-          ${scored ? `<td>${score.hits} of ${score.scored}</td><td>${score.scored ? Math.round((100 * score.hits) / score.scored) + "%" : "—"}</td>` : ""}
+          ${scored ? `<td>${score.scored ? `${score.hits}/${score.scored} · ${Math.round((100 * score.hits) / score.scored)}%` : "—"}</td>` : ""}
           <td>${score.tighter}</td><td>${score.changed_mind}</td>
         </tr>`,
         )
         .join("")}</tbody></table></div>
-      <p class="note">“Tighter” counts the questions where the range was
+      <p class="note">“In” counts the ranges that contained the answer.
+        “Tighter” counts the questions where the range was
         narrower than the room's median range. “Changed” counts the questions
         where the second range differed from the first.</p>`,
     );
   }
 
+  // Each earlier question has a field for its answer, for one looked up
+  // afterwards. The list is only redrawn when it changes, so that a
+  // player answering the current question does not wipe what the host is
+  // typing.
+  let drawnHistory = "";
+  byId("history").addEventListener("submit", (event) => {
+    event.preventDefault();
+    const form = event.target as HTMLFormElement;
+    const field = form.querySelector("input") as HTMLInputElement;
+    const given = field.valueAsNumber;
+    api("PUT", at("/answer"), {
+      question: Number(form.dataset.index),
+      answer: isFinite(given) ? given : null,
+    })
+      .then(() => fail(""))
+      .catch((e: unknown) => fail(e instanceof Error ? e.message : String(e)));
+  });
+
   function drawHistory(view: HostView): void {
+    const drawing = JSON.stringify(view.history);
+    if (drawing === drawnHistory) return;
+    drawnHistory = drawing;
     if (view.history.length === 0) {
       html("history", "");
       return;
@@ -459,12 +482,22 @@ function host(key: string): void {
       `<h3>Asked already</h3>${view.history
         .map(
           (past) => `<div class="past">
-        <span>${esc(past.question)}</span>
-        <span>${past.answer === null ? "no answer" : esc(num(past.answer))}${
+        <p>${esc(past.question)}</p>
+        <p class="note">${
+          past.answer === null
+            ? "No answer yet."
+            : `The answer: ${esc(num(past.answer))}${past.unit ? ` ${esc(past.unit)}` : ""}.`
+        }${
           past.hits === null
             ? ""
-            : ` · ${past.hits_before === null ? "" : `${past.hits_before} → `}${past.hits} of ${past.n} in`
-        }</span>
+            : ` ${past.hits_before === null ? "" : `${past.hits_before} → `}${past.hits} of ${past.n} ranges contained it.`
+        }</p>
+        <form class="past-answer" data-index="${past.index}">
+          <input type="number" step="any" inputmode="decimal"
+            aria-label="The answer" placeholder="The answer"
+            value="${past.answer === null ? "" : past.answer}">
+          <button class="button" type="submit">${past.answer === null ? "Save" : "Change"}</button>
+        </form>
       </div>`,
         )
         .join("")}`,
@@ -493,7 +526,7 @@ function host(key: string): void {
       hide("reveal", round.stage === "revealed");
       // The answer can be entered when the question is asked, typed in
       // while it is being answered, or corrected after the reveal. It
-      // stays editable until the next question replaces it.
+      // stays editable afterwards too, under "Asked already".
       hide("answer-form", false);
       if (answerFor !== round.asked) {
         answerFor = round.asked;
@@ -510,10 +543,9 @@ function host(key: string): void {
     drawHistory(view);
   }
 
-  api<{ view: HostView }>("GET", at(""))
-    .then((body) => draw(body.view))
-    .catch((e: unknown) => fail(e instanceof Error ? e.message : String(e)));
-  watch<HostView>(at("/events"), draw);
+  // Fetches the room once, then keeps it up to date from its event
+  // stream; `watch` adds the "/events" itself.
+  watch<HostView>(at(""), draw);
 }
 
 // ------------------------------------------------------------------- join
@@ -692,9 +724,9 @@ function player(key: string): void {
     const mine = round.stage === "second" ? view.mine_after : view.mine_before;
     text(
       "mine",
-      mine
-        ? `Sent: ${ranged(mine)}. You can change it until the host moves on.`
-        : `${view.submitted} of ${plural(view.players, "person", "people")} have answered.`,
+      `${
+        mine ? `Sent: ${ranged(mine)}. You can change it until the host moves on. ` : ""
+      }${view.submitted} of ${plural(view.players, "person", "people")} have answered.`,
     );
     if (round.stage === "second" && view.mine_before) {
       text(
@@ -707,10 +739,9 @@ function player(key: string): void {
     html("p-result", resultHtml(view));
   }
 
-  api<{ view: PlayerView }>("GET", at(""))
-    .then((body) => draw(body.view))
-    .catch((e: unknown) => fail(e instanceof Error ? e.message : String(e)));
-  watch<PlayerView>(at("/events"), draw);
+  // Fetches the room once, then keeps it up to date from its event
+  // stream; `watch` adds the "/events" itself.
+  watch<PlayerView>(at(""), draw);
 }
 
 const where = route();
