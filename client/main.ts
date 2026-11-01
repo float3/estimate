@@ -12,6 +12,7 @@ import {
   hide,
   html,
   joining,
+  landed,
   list,
   num,
   onClick,
@@ -19,6 +20,7 @@ import {
   opening,
   plural,
   route,
+  sentState,
   setValue,
   show,
   showJoin,
@@ -533,6 +535,54 @@ function player(key: string): void {
   const at = (path: string) => `/api/p/${encodeURIComponent(key)}${path}`;
   /** Which pass the fields were last filled in for. */
   let filledFor = "";
+  let last: PlayerView | null = null;
+
+  /** What this player has sent in the pass being taken. */
+  const sent = (view: PlayerView): Bound | null =>
+    view.round?.stage === "second" ? view.mine_after : view.mine_before;
+
+  /** Whether your range is in, and whether you can still change it. */
+  function drawStatus(): void {
+    const view = last;
+    const round = view?.round;
+    const send = byId<HTMLButtonElement>("send");
+    if (!view || !round || round.stage === "revealed") {
+      sentState("status", null);
+      return;
+    }
+    if (round.stage === "discussion") {
+      const first = view.mine_before;
+      if (first) sentState("status", "locked", `🔒 Locked in: ${ranged(first)}`, "Talk it over. The host will ask everyone again, and you can change it then.");
+      else sentState("status", "missed", "You did not send a range", "Talk it over. The host will ask everyone again.");
+      return;
+    }
+    const mine = sent(view);
+    const low = value("low");
+    const high = value("high");
+    const same = mine !== null && low === mine.low && high === mine.high;
+    send.classList.toggle("done", same);
+    send.disabled = same;
+    const pass = round.stage === "second" ? "new range" : "range";
+    if (mine === null) {
+      sentState(
+        "status",
+        "waiting",
+        "Not sent yet",
+        round.stage === "second" && view.mine_before
+          ? "Your first range is filled in. Press Send to keep it, or change it first. It only counts once sent."
+          : `Your ${pass} only counts once you press Send.`,
+      );
+      send.textContent = round.stage === "second" ? "Send the new range" : "Send";
+    } else if (same) {
+      sentState("status", "sent", `✓ Sent: ${ranged(mine)}`, "You can still change it until the host moves on.");
+      send.textContent = "Sent ✓";
+    } else {
+      sentState("status", "changed", "Your change is not sent yet", `The room still has ${ranged(mine)} from you. Press Send to replace it.`);
+      send.textContent = "Send the change";
+    }
+  }
+
+  for (const id of ["low", "high"]) byId(id).addEventListener("input", drawStatus);
 
   onSubmit("bounds-form", async () => {
     const low = value("low");
@@ -547,6 +597,7 @@ function player(key: string): void {
     });
     draw(body.view);
     fail("");
+    landed("status");
   });
 
   /** This player's two answers and the difference between them. */
@@ -613,6 +664,7 @@ function player(key: string): void {
   }
 
   function draw(view: PlayerView): void {
+    last = view;
     unit = view.round ? view.round.unit : "";
     html("you", `<span class="dot"></span> You are ${esc(view.name)}`);
     text("where", `${view.confidence}% sure`);
@@ -622,7 +674,8 @@ function player(key: string): void {
       text("p-question", "Waiting for the first question");
       text("p-unit", "");
       hide("bounds-form", true);
-      hide("p-closed", true);
+      sentState("status", null);
+      text("mine", "");
       html("p-result", "");
       return;
     }
@@ -638,23 +691,6 @@ function player(key: string): void {
           : ""),
     );
     hide("bounds-form", !taking);
-    hide("p-closed", taking);
-    byId("send").textContent =
-      round.stage === "second" ? "Send the new range" : "Send";
-
-    if (!taking) {
-      const standing = view.mine_after ?? view.mine_before;
-      text(
-        "p-closed",
-        round.stage === "discussion"
-          ? standing
-            ? `You said ${ranged(standing)}. Talk it over; the host will ask again.`
-            : "You did not answer. Talk it over; the host will ask again."
-          : standing
-            ? `Your range: ${ranged(standing)}.`
-            : "You did not answer this one.",
-      );
-    }
 
     // The second pass starts from the first answer, so that submitting
     // it unchanged counts as an answer.
@@ -667,12 +703,10 @@ function player(key: string): void {
       setValue("high", mine ? mine.high : null);
     }
 
-    const mine = round.stage === "second" ? view.mine_after : view.mine_before;
+    drawStatus();
     text(
       "mine",
-      `${
-        mine ? `Sent: ${ranged(mine)}. You can change it until the host moves on. ` : ""
-      }${view.submitted} of ${plural(view.players, "person", "people")} have answered.`,
+      taking ? `${view.submitted} of ${plural(view.players, "person", "people")} have sent a range.` : "",
     );
     if (round.stage === "second" && view.mine_before) {
       text(
