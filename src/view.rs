@@ -14,6 +14,8 @@ use crate::game::{Bound, Change, Game, Pass, Queued, Round, Score, Shift, Stage,
 
 #[derive(Serialize)]
 pub struct Who<'a> {
+    /// The player's [`Present::id`], to match them to `people`.
+    id: u32,
     name: &'a str,
     /// Whether they gave a range in the first pass, and in the second.
     first: bool,
@@ -67,6 +69,9 @@ pub struct Host<'a> {
     /// carries its own, in `round`.
     confidence: u8,
     players: Vec<Who<'a>>,
+    /// Who is away: not connected, and no range for this question or the
+    /// one before. See `rooms::lobby::away`.
+    away: Vec<u32>,
     round: Option<Asked<'a>>,
     /// The first pass, the second pass, and everybody's final ranges.
     before: Option<Stats>,
@@ -172,11 +177,13 @@ pub fn host(game: &Game, now: u64) -> Host<'_> {
         players: players
             .iter()
             .map(|player| Who {
+                id: player.id,
                 name: &player.name,
                 first: round.is_some_and(|r| r.before.contains_key(&player.key)),
                 second: round.is_some_and(|r| r.after.contains_key(&player.key)),
             })
             .collect(),
+        away: rooms::lobby::away_ids(game, now),
         round: round.map(|round| round.asked(true)),
         before: round.and_then(|r| r.stats(players, Pass::First)),
         after: round.and_then(|r| r.stats(players, Pass::Second)),
@@ -688,5 +695,33 @@ mod tests {
         );
         let top: Vec<_> = view.top.iter().map(|t| t.name).collect();
         assert_eq!(top, ["Bo", "Ada"], "the board, by name, best first");
+    }
+
+    #[test]
+    fn away_is_not_connected_and_no_range_for_this_question_or_the_last() {
+        use rooms::lobby::{PRESENT_MS, away_ids, remove_away};
+        let (mut game, ada) = room();
+        let bo = admit(&mut game, "Bo", None, 1000).unwrap();
+        let id = |game: &Game, key: &str| game.lobby.player(key).unwrap().id;
+        let later = 1000 + PRESENT_MS;
+        assert_eq!(
+            away_ids(&game, later),
+            [id(&game, &bo)],
+            "Bo never answered"
+        );
+        game.ask("And now?", "", None, later).unwrap();
+        assert_eq!(away_ids(&game, later), [id(&game, &bo)], "Ada did, before");
+        game.ask("And then?", "", None, later).unwrap();
+        let away = away_ids(&game, later);
+        assert_eq!(away, [id(&game, &ada), id(&game, &bo)]);
+        assert!(json(&host(&game, later)).contains(&format!("\"away\":{}", json(&away))));
+        game.lobby.touch(&bo, later);
+        assert_eq!(
+            away_ids(&game, later),
+            [id(&game, &ada)],
+            "connected is here"
+        );
+        assert_eq!(remove_away(&mut game, &away, later).unwrap().len(), 1);
+        assert_eq!(game.lobby.len(), 1, "only Ada, who was still away");
     }
 }

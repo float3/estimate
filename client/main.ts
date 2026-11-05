@@ -19,7 +19,6 @@ import {
   joinLink,
   keepAwake,
   landed,
-  list,
   num,
   onClick,
   onSubmit,
@@ -35,6 +34,7 @@ import {
   showConnection,
   text,
   value,
+  waitingLine,
   wall,
   wallButton,
   watch,
@@ -109,6 +109,7 @@ interface Asked {
 }
 
 interface Who {
+  id: number;
   name: string;
   first: boolean;
   second: boolean;
@@ -191,6 +192,8 @@ interface HostView {
   /** The level the next question will be asked at. */
   confidence: number;
   players: Who[];
+  /** Not connected, and no range for this question or the one before. */
+  away: number[];
   round: Asked | null;
   before: Stats | null;
   after: Stats | null;
@@ -472,8 +475,15 @@ function host(key: string): void {
 
   function drawRoom(view: HostView): void {
     shareLink("join-share", joinLink(view.join));
-    text("who", connectedCount(view.people));
-    roster("people", view.people, { remove });
+    // The list is folded; the count of who is away stays in sight.
+    text(
+      "who",
+      connectedCount(view.people) + (view.away.length ? ` · ${view.away.length} away` : ""),
+    );
+    roster("people", view.people, {
+      remove,
+      away: { ids: view.away, remove: (ids) => api("POST", at("/remove-away"), { ids }) },
+    });
     wallButton("wall-button", view.wall);
 
     // The level is fixed while a question is open: whoever has sent a
@@ -510,16 +520,15 @@ function host(key: string): void {
 
   function drawWaiting(view: HostView, round: Asked): void {
     const taking = round.stage === "second" ? "second" : "first";
-    const inYet = view.players.filter((who) =>
-      taking === "second" ? who.second : who.first,
+    const inYet = new Set(
+      view.players
+        .filter((who) => (taking === "second" ? who.second : who.first))
+        .map((who) => who.id),
     );
-    const missing = view.players
-      .filter((who) => !(taking === "second" ? who.second : who.first))
-      .map((who) => who.name);
-    let said = `${inYet.length} of ${plural(view.players.length, "person", "people")} answered`;
-    if (round.stage !== "revealed" && missing.length > 0 && missing.length <= 6) {
-      said += ` · waiting on ${list(missing)}`;
-    }
+    let said =
+      round.stage === "revealed"
+        ? `${inYet.size} of ${plural(view.players.length, "person", "people")} answered`
+        : waitingLine(inYet, view.people, "answered");
     if (round.answer === null) said += " · no answer entered yet";
     text("progress", said);
   }
