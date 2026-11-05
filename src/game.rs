@@ -186,6 +186,15 @@ impl HasLobby for Game {
         }
     }
 
+    /// Gave a range, in either pass, to the question on now or the one
+    /// before. Somebody who did not, and whose phone is not connected,
+    /// is offered to the host as away.
+    fn recent(&self, player: &Player) -> bool {
+        self.rounds.iter().rev().take(2).any(|round| {
+            round.before.contains_key(&player.key) || round.after.contains_key(&player.key)
+        })
+    }
+
     /// What the projector shows. See `view::wall`.
     fn wall_game(&self, _now: u64) -> serde_json::Value {
         serde_json::to_value(crate::view::wall(self)).unwrap_or_default()
