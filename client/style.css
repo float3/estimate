@@ -60,10 +60,6 @@ h3 {
 
 /* The wall: the question and the counts before the reveal, and the
  * ranges as unnamed bars after it, large enough for the back of a room. */
-.wall-game .eyebrow {
-  font-size: clamp(0.8rem, 1.3vw, 1.1rem);
-}
-
 .wall-question {
   font: 400 clamp(1.6rem, 3.4vw, 3rem) / 1.2 Georgia, serif;
   margin: 4px 0 8px;
@@ -151,4 +147,16 @@ h3 {
 .wall-top li:not(.eyebrow)::before {
   content: counter(place) ". ";
   color: var(--body);
+}
+
+/* The ask button asking "Tap again" (confirmTap). rooms.css sets
+ * `.primary` with the `background` shorthand, which drops the draining
+ * bar, and its dark fill hides the red text. */
+.button.primary.armed {
+  background-color: transparent;
+  background-image: linear-gradient(
+    color-mix(in srgb, var(--bad) 20%, transparent),
+    color-mix(in srgb, var(--bad) 20%, transparent)
+  );
+  background-repeat: no-repeat;
 }

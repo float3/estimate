@@ -7,6 +7,7 @@
 import {
   api,
   byId,
+  confirmTap,
   connectedCount,
   el,
   esc,
@@ -32,7 +33,6 @@ import {
   shareLink,
   show,
   showConnection,
-  subscribe,
   text,
   value,
   wall,
@@ -291,13 +291,17 @@ function host(key: string): void {
 
   text("where", "You are the host");
 
+  // Asking the next question reveals the open one, so the button asks
+  // once more first. Not with confirm(), which a browser may not show
+  // inside the shared room's frame.
   onSubmit("ask-form", async () => {
     if (
       open &&
-      !confirm(
-        `“${open.question}” has not been revealed. Asking the next question reveals it to everybody now${
-          open.stage === "first" ? ", without a discussion or a second range" : ""
-        }. Ask anyway?`,
+      !confirmTap(
+        byId("ask-button"),
+        open.stage === "first"
+          ? "Reveal it with no second range? Tap again"
+          : "Reveal it to everybody? Tap again",
       )
     ) {
       return;
@@ -336,8 +340,9 @@ function host(key: string): void {
     fail("");
   });
 
-  const remove = (name: string) =>
-    api("POST", at("/remove"), { name }).then(() => fail(""));
+  // Answers 204; the host's own stream brings the new view.
+  const remove = (person: Present) =>
+    api("POST", at("/remove"), { id: person.id }).then(() => fail(""));
 
   function drawRoom(view: HostView): void {
     shareLink("join-share", joinLink(view.join));
@@ -515,7 +520,17 @@ function host(key: string): void {
     const round = view.round;
     hide("asked", round === null);
     open = round && round.stage !== "revealed" ? round : null;
-    text("ask-button", open ? "Reveal this one and ask" : "Ask the room");
+    // A button that is asking "Tap again" keeps asking while ranges come
+    // in, and stops if the question was revealed some other way.
+    const ask = byId("ask-button");
+    const label = open ? "Reveal this one and ask" : "Ask the room";
+    if (ask.dataset.armed !== "1") ask.textContent = label;
+    else if (open) ask.dataset.said = label;
+    else {
+      delete ask.dataset.armed;
+      ask.classList.remove("armed");
+      ask.textContent = label;
+    }
     if (round) {
       text("h-state", STAGES[round.stage]);
       text("h-question", round.question);
@@ -763,12 +778,11 @@ function player(key: string): void {
   // then the link is gone: the question goes too, so nobody types a
   // range into a screen that can no longer send one.
   showConnection(
-    subscribe<PlayerView>(at(""), at("/events"), draw, () => {
-      hide("screen-player", true);
-      fail(
-        "You are not in this room. The host may have taken you out, or the room has finished. Open the join link again to rejoin.",
-      );
-    }),
+    watch<PlayerView>(
+      at(""),
+      draw,
+      "You are not in this room. The host may have taken you out, or the room has finished. Open the join link again to rejoin.",
+    ),
   );
   void keepAwake();
 }
@@ -886,8 +900,8 @@ function drawWall(game: WallGame, slot: HTMLElement): void {
   const round = game.round;
   if (!round) {
     slot.replaceChildren(
-      el("p", { className: "eyebrow" }, `${game.confidence}% sure`),
-      el("p", { className: "wall-question" }, "Waiting for the first question"),
+      el("p", { className: "eyebrow wall-idle" }, `${game.confidence}% sure`),
+      el("p", { className: "wall-question wall-idle" }, "Waiting for the first question"),
     );
     return;
   }
