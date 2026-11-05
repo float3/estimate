@@ -77,6 +77,8 @@ pub struct Host<'a> {
     changes: Vec<Change>,
     /// Everybody's final range, lowest first.
     answers: Vec<Answer<'a>>,
+    /// The ranges as a picture, once the question is revealed.
+    reveal: Option<Reveal>,
     /// Newest first, the question on now excluded.
     history: Vec<Past<'a>>,
     scores: Vec<Score>,
@@ -103,6 +105,8 @@ pub struct Player<'a> {
     hit_before: Option<bool>,
     /// How this player's own two answers differed.
     mine_changed: Option<Change>,
+    /// Everybody's ranges without names, theirs marked, after the reveal.
+    reveal: Option<Reveal>,
     score: Option<Score>,
 }
 
@@ -178,6 +182,9 @@ pub fn host(game: &Game, now: u64) -> Host<'_> {
         shift: round.and_then(|r| r.shift(players)),
         changes: round.map(|r| r.changes(players)).unwrap_or_default(),
         answers,
+        reveal: round
+            .filter(|r| r.stage == Stage::Revealed)
+            .map(|r| r.reveal(players, None)),
         history: game
             .rounds
             .iter()
@@ -237,6 +244,7 @@ pub fn player<'a>(game: &'a Game, key: &str) -> Option<Player<'a>> {
                 .into_iter()
                 .find(|change| change.name == player.name)
         }),
+        reveal: shown.map(|r| r.reveal(players, Some(key))),
         // The revealed questions only. A tally that included the open
         // question would say whether this player's own range had hit.
         score: game
@@ -249,12 +257,18 @@ pub fn player<'a>(game: &'a Game, key: &str) -> Option<Player<'a>> {
 /// How many of the board the wall names.
 const WALL_TOP: usize = 3;
 
-/// One range on the wall, without whose it was.
+/// One range in the reveal's picture, without whose it was.
 #[derive(Serialize)]
 pub struct Range {
     low: f64,
     high: f64,
     hit: Option<bool>,
+    /// Their first range, where this one is their second, drawn faintly
+    /// behind it.
+    first: Option<(f64, f64)>,
+    /// Whether it is the range of the phone it is sent to.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    mine: bool,
 }
 
 /// The two passes compared, as counts only.
@@ -268,11 +282,12 @@ pub struct Twice {
     hits_after: Option<usize>,
 }
 
-/// What the wall shows once a question is revealed.
+/// The ranges against the answer, once a question is revealed: for the
+/// wall, the host and each phone.
 #[derive(Serialize)]
 pub struct Reveal {
     answer: Option<f64>,
-    /// Everybody's final range, lowest first, with no names.
+    /// Everybody's final range, by midpoint, with no names.
     ranges: Vec<Range>,
     /// The median lower and upper bound.
     middle: Option<(f64, f64)>,
@@ -319,6 +334,50 @@ pub struct Wall<'a> {
     top: Vec<Top<'a>>,
 }
 
+impl Round {
+    /// The picture of a revealed question. `mine` marks one player's
+    /// range, for their own phone.
+    fn reveal(&self, players: &[crate::game::Player], mine: Option<&str>) -> Reveal {
+        let mut ranges: Vec<Range> = players
+            .iter()
+            .filter_map(|p| {
+                let bound = self.standing(&p.key)?;
+                Some(Range {
+                    low: bound.low,
+                    high: bound.high,
+                    hit: self.answer.map(|a| bound.contains(a)),
+                    first: self
+                        .after
+                        .contains_key(&p.key)
+                        .then(|| self.before.get(&p.key))
+                        .flatten()
+                        .map(|b| (b.low, b.high)),
+                    mine: mine == Some(p.key.as_str()),
+                })
+            })
+            .collect();
+        let middle = |r: &Range| r.low + r.high;
+        ranges.sort_by(|a, b| {
+            middle(a)
+                .total_cmp(&middle(b))
+                .then(a.low.total_cmp(&b.low))
+        });
+        let standing = self.standing_stats(players);
+        Reveal {
+            answer: self.answer,
+            ranges,
+            middle: standing.as_ref().map(|s| (s.median_low, s.median_high)),
+            hits: standing.and_then(|s| s.hits),
+            twice: self.shift(players).map(|shift| Twice {
+                n: shift.n,
+                moved: shift.moved,
+                hits_before: shift.hits_before,
+                hits_after: shift.hits_after,
+            }),
+        }
+    }
+}
+
 pub fn wall(game: &Game) -> Wall<'_> {
     let players = &game.lobby.players;
     let round = game.round();
@@ -337,31 +396,7 @@ pub fn wall(game: &Game) -> Wall<'_> {
             stage: r.stage,
             sent: r.in_so_far(players),
             of: players.len(),
-            reveal: revealed.then(|| {
-                let mut ranges: Vec<Range> = players
-                    .iter()
-                    .filter_map(|p| r.standing(&p.key))
-                    .map(|b| Range {
-                        low: b.low,
-                        high: b.high,
-                        hit: r.answer.map(|a| b.contains(a)),
-                    })
-                    .collect();
-                ranges.sort_by(|a, b| a.low.total_cmp(&b.low).then(a.high.total_cmp(&b.high)));
-                let standing = r.standing_stats(players);
-                Reveal {
-                    answer: r.answer,
-                    ranges,
-                    middle: standing.as_ref().map(|s| (s.median_low, s.median_high)),
-                    hits: standing.and_then(|s| s.hits),
-                    twice: r.shift(players).map(|shift| Twice {
-                        n: shift.n,
-                        moved: shift.moved,
-                        hits_before: shift.hits_before,
-                        hits_after: shift.hits_after,
-                    }),
-                }
-            }),
+            reveal: revealed.then(|| r.reveal(players, None)),
         }),
         top: scores
             .iter()
@@ -541,6 +576,40 @@ mod tests {
     }
 
     #[test]
+    fn a_phone_is_sent_the_picture_after_the_reveal_with_its_own_range_marked() {
+        let (mut game, ada) = room();
+        let bo = admit(&mut game, "Bo", None, 1000).unwrap();
+        game.bound(&bo, 1_000_000.0, 2_000_000.0, 1001).unwrap();
+        game.move_to(Stage::Second).unwrap();
+        game.bound(&bo, 1_100_000.0, 1_900_000.0, 1002).unwrap();
+        assert!(
+            player(&game, &ada).unwrap().reveal.is_none(),
+            "not before it"
+        );
+        assert!(host(&game, 1000).reveal.is_none());
+
+        game.reveal().unwrap();
+        let view = player(&game, &ada).unwrap();
+        let reveal = view.reveal.as_ref().expect("after it");
+        let mine: Vec<bool> = reveal.ranges.iter().map(|r| r.mine).collect();
+        assert_eq!(mine, [true, false], "Ada's is 1 to 2, the lower one");
+        assert_eq!(reveal.ranges[0].first, None, "Ada only answered once");
+        assert_eq!(reveal.ranges[1].first, Some((1_000_000.0, 2_000_000.0)));
+        let ranges = json(&reveal.ranges);
+        assert!(!ranges.contains("Bo") && !ranges.contains(&bo), "{ranges}");
+
+        let host = host(&game, 1000);
+        let reveal = host.reveal.expect("the host has it too");
+        assert!(
+            reveal.ranges.iter().all(|r| !r.mine),
+            "nothing is the host's"
+        );
+        let wall = wall(&game);
+        let reveal = wall.round.and_then(|r| r.reveal).unwrap();
+        assert!(reveal.ranges.iter().all(|r| !r.mine));
+    }
+
+    #[test]
     fn a_key_that_is_not_in_the_room_has_no_view() {
         let (game, _) = room();
         assert!(player(&game, "nobody").is_none());
@@ -592,7 +661,7 @@ mod tests {
         let reveal = view.round.as_ref().and_then(|r| r.reveal.as_ref()).unwrap();
         assert_eq!(reveal.answer, Some(ANSWER));
         assert_eq!(reveal.ranges.len(), 2);
-        assert_eq!(reveal.ranges[0].high, 2.0, "lowest first");
+        assert_eq!(reveal.ranges[0].high, 2.0, "by midpoint");
         assert_eq!(reveal.ranges[1].hit, Some(true));
         assert_eq!(reveal.hits, Some(1));
         let ranges = json(&reveal.ranges);

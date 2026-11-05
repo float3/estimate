@@ -166,6 +166,8 @@ interface HostView {
   shift: Shift | null;
   changes: Change[];
   answers: Answer[];
+  /** The picture, once the question is revealed. */
+  reveal: Reveal | null;
   history: Past[];
   scores: Score[];
 }
@@ -184,6 +186,9 @@ interface PlayerView {
   hit: boolean | null;
   hit_before: boolean | null;
   mine_changed: Change | null;
+  /** Everybody's ranges, unnamed, with this player's marked; after the
+   *  reveal only. */
+  reveal: Reveal | null;
   score: Score | null;
 }
 
@@ -463,9 +468,10 @@ function host(key: string): void {
     }
     const scored = view.answers.some((answer) => answer.hit !== null);
     const changed = new Map(view.changes.map((change) => [change.name, change]));
+    const chart = view.reveal ? rangeChart(view.reveal, unit, false) : null;
     html(
       "ranges",
-      `<h3>Everybody's ranges</h3><div class="scroll"><table><thead><tr>
+      `<h3>Everybody's ranges</h3>${chart ? chart.outerHTML : ""}<div class="scroll"><table><thead><tr>
         <th>Who</th><th>At least</th><th>At most</th><th>Moved</th>${scored ? "<th>In?</th>" : ""}
       </tr></thead><tbody>${view.answers
         .map((answer) => {
@@ -784,7 +790,9 @@ function player(key: string): void {
            ${points(score.miss_cost)} for the misses. Lower is better. The
            discussion moved you on ${plural(score.changed_mind, "question", "questions")}.</p>`
         : "";
-    return `<div class="panel">${answer}${mineHtml(view)}${shift}${room}${evening}</div>`;
+    const chart = view.reveal ? rangeChart(view.reveal, round.unit, false) : null;
+    const picture = chart ? `<h3>Everybody's ranges</h3>${chart.outerHTML}` : "";
+    return `<div class="panel">${answer}${mineHtml(view)}${picture}${shift}${room}${evening}</div>`;
   }
 
   function draw(view: PlayerView): void {
@@ -860,16 +868,21 @@ function player(key: string): void {
 
 // ------------------------------------------------------------------- wall
 
-/** One range on the wall. Nobody's name is sent with it. */
-interface WallRange {
+/** One range in the reveal's picture. Nobody's name is sent with it. */
+interface ChartRange {
   low: number;
   high: number;
   hit: boolean | null;
+  /** Their first range, where this is their second. */
+  first: [number, number] | null;
+  /** Only on a player's phone: this one is theirs. */
+  mine?: boolean;
 }
 
-interface WallReveal {
+/** A revealed question, for the picture: see `view::Reveal`. */
+interface Reveal {
   answer: number | null;
-  ranges: WallRange[];
+  ranges: ChartRange[];
   /** The median lower and upper bound. */
   middle: [number, number] | null;
   hits: number | null;
@@ -892,7 +905,7 @@ interface WallGame {
     stage: Stage;
     sent: number;
     of: number;
-    reveal: WallReveal | null;
+    reveal: Reveal | null;
   } | null;
   top: { name: string; hits: number; scored: number; cost: number }[];
 }
@@ -912,55 +925,71 @@ function scale(values: number[]): { at: (v: number) => number; log: boolean; lo:
   return { at: (v: number) => (f(v) - (a - pad)) / (b - a + 2 * pad), log, lo, hi };
 }
 
-/** The ranges as bars against the answer, lowest first, unnamed. */
-function rangeChart(reveal: WallReveal, unitName: string): SVGSVGElement | null {
+/** The ranges as bars against the answer, by midpoint, unnamed. A
+ *  second range is drawn over a faint copy of the first. `wide` is the
+ *  wall's: wider, with more room for rows; otherwise it is sized for a
+ *  phone or the host's column, with a line saying what the colours are. */
+function rangeChart(reveal: Reveal, unitName: string, wide: boolean): Element | null {
   const ranges = reveal.ranges;
   if (ranges.length === 0) return null;
-  const values = ranges.flatMap((r) => [r.low, r.high]);
+  const values = ranges.flatMap((r) => [r.low, r.high, ...(r.first ?? [])]);
   if (reveal.answer !== null) values.push(reveal.answer);
   const { at, log, lo, hi } = scale(values);
-  const width = 1000;
-  const row = Math.max(4, Math.min(28, 420 / ranges.length));
+  const width = wide ? 1000 : 600;
+  const row = Math.max(4, Math.min(wide ? 28 : 40, (wide ? 420 : 360) / ranges.length));
   const bar = Math.max(2, row * 0.6);
   const top = 8;
   const base = top + row * ranges.length + 6;
   const height = base + 40;
   const x = (v: number) => (at(v) * width).toFixed(1);
+  const rect = (low: number, high: number, y: number, kind: string) => {
+    const x1 = at(low) * width;
+    const x2 = Math.max(at(high) * width, x1 + 3);
+    return `<rect class="chart-bar ${kind}" x="${x1.toFixed(1)}" y="${y.toFixed(1)}" width="${(x2 - x1).toFixed(1)}" height="${bar.toFixed(1)}" rx="${Math.min(4, bar / 2).toFixed(1)}"/>`;
+  };
   const parts: string[] = [];
   ranges.forEach((r, i) => {
     const y = top + i * row + (row - bar) / 2;
-    const x1 = at(r.low) * width;
-    const x2 = Math.max(at(r.high) * width, x1 + 3);
+    if (r.first) parts.push(rect(r.first[0], r.first[1], y, "first"));
     const kind = r.hit === null ? "open" : r.hit ? "hit" : "miss";
-    parts.push(
-      `<rect class="wall-bar ${kind}" x="${x1.toFixed(1)}" y="${y.toFixed(1)}" width="${(x2 - x1).toFixed(1)}" height="${bar.toFixed(1)}" rx="${Math.min(4, bar / 2).toFixed(1)}"/>`,
-    );
+    parts.push(rect(r.low, r.high, y, `${kind}${r.mine ? " mine" : ""}`));
   });
-  parts.push(`<line class="wall-axis" x1="0" x2="${width}" y1="${base}" y2="${base}"/>`);
+  parts.push(`<line class="chart-axis" x1="0" x2="${width}" y1="${base}" y2="${base}"/>`);
   const tick = (v: number, anchor: string) =>
-    `<text class="wall-tick" x="${x(v)}" y="${base + 32}" text-anchor="${anchor}">${esc(num(v))}</text>`;
+    `<text class="chart-tick" x="${x(v)}" y="${base + 32}" text-anchor="${anchor}">${esc(num(v))}</text>`;
   parts.push(tick(lo, "start"), tick(hi, "end"));
   if (log) {
     parts.push(
-      `<text class="wall-tick" x="${width / 2}" y="${base + 32}" text-anchor="middle">log scale</text>`,
+      `<text class="chart-tick" x="${width / 2}" y="${base + 32}" text-anchor="middle">log scale</text>`,
     );
   }
   if (reveal.answer !== null) {
     const ax = x(reveal.answer);
-    parts.push(`<line class="wall-answer" x1="${ax}" x2="${ax}" y1="0" y2="${base}"/>`);
+    parts.push(`<line class="chart-answer" x1="${ax}" x2="${ax}" y1="0" y2="${base}"/>`);
   }
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
-  svg.setAttribute("class", "wall-chart");
+  svg.setAttribute("class", wide ? "range-chart wall-chart" : "range-chart");
   svg.setAttribute("role", "img");
+  const mine = ranges.find((r) => r.mine);
   svg.setAttribute(
     "aria-label",
     `${plural(ranges.length, "range", "ranges")}${
       reveal.answer === null ? "" : ` against the answer, ${num(reveal.answer)} ${unitName}`
-    }${log ? ", on a log scale" : ""}`,
+    }${log ? ", on a log scale" : ""}${mine ? `; yours is ${num(mine.low)} to ${num(mine.high)}` : ""}`,
   );
   svg.innerHTML = parts.join("");
-  return svg;
+  if (wide) return svg;
+  const key: string[] = [];
+  if (reveal.answer !== null) key.push("the line is the answer", "green held it, red missed");
+  if (mine) key.push("yours is outlined");
+  if (ranges.some((r) => r.first)) key.push("the faint bars are first ranges");
+  const figure = el("figure", { className: "chart" }, svg);
+  if (key.length > 0) {
+    const said = key.join(", ");
+    figure.append(el("figcaption", { className: "note" }, `${said[0].toUpperCase()}${said.slice(1)}.`));
+  }
+  return figure;
 }
 
 /** The game's part of the wall. Large, for the back of the room. Names
@@ -1016,7 +1045,7 @@ function drawWall(game: WallGame, slot: HTMLElement): void {
   );
   // The bars first, so they are on screen without scrolling; the
   // counts under them.
-  const chart = rangeChart(reveal, round.unit);
+  const chart = rangeChart(reveal, round.unit, true);
   if (chart) children.push(chart);
   const said: string[] = [];
   const n = reveal.ranges.length;

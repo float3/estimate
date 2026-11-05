@@ -92,38 +92,60 @@ h3 {
   font-family: Arial, Helvetica, sans-serif;
 }
 
-.wall-chart {
+.range-chart {
   display: block;
   width: 100%;
   height: auto;
-  max-height: 32vh;
   margin-top: 12px;
 }
 
-.wall-bar.hit {
+.wall-chart {
+  max-height: 32vh;
+}
+
+/* The reveal's picture on the host's screen and a phone. */
+.chart {
+  margin: 8px 0 0;
+}
+
+.chart figcaption {
+  margin-top: 4px;
+}
+
+.chart-bar.first {
+  fill: var(--body);
+  opacity: 0.25;
+}
+
+.chart-bar.mine {
+  stroke: var(--ink);
+  stroke-width: 3;
+}
+
+.chart-bar.hit {
   fill: var(--mark);
 }
 
-.wall-bar.miss {
+.chart-bar.miss {
   fill: var(--bad);
   opacity: 0.75;
 }
 
-.wall-bar.open {
+.chart-bar.open {
   fill: var(--body);
 }
 
-.wall-axis {
+.chart-axis {
   stroke: var(--border);
   stroke-width: 2;
 }
 
-.wall-answer {
+.chart-answer {
   stroke: var(--ink);
   stroke-width: 4;
 }
 
-.wall-tick {
+.chart-tick {
   fill: var(--body);
   font-size: 26px;
 }
