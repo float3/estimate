@@ -36,6 +36,8 @@ pub struct Asked<'a> {
     unit: &'a str,
     stage: Stage,
     answer: Option<f64>,
+    /// The level it was asked at, which its numbers are judged against.
+    confidence: u8,
     asked: u64,
 }
 
@@ -47,6 +49,7 @@ pub struct Past<'a> {
     question: &'a str,
     unit: &'a str,
     answer: Option<f64>,
+    confidence: u8,
     n: usize,
     hits: Option<usize>,
     /// How many contained it in the first pass, where there was one.
@@ -60,6 +63,8 @@ pub struct Host<'a> {
     wall: &'a str,
     /// Who is in and whose phone is connected, for the roster.
     people: Vec<Present<'a>>,
+    /// The level the next question will be asked at. The question on now
+    /// carries its own, in `round`.
     confidence: u8,
     players: Vec<Who<'a>>,
     round: Option<Asked<'a>>,
@@ -80,6 +85,7 @@ pub struct Host<'a> {
 #[derive(Serialize)]
 pub struct Player<'a> {
     name: &'a str,
+    /// The room's level; the question carries the one it was asked at.
     confidence: u8,
     round: Option<Asked<'a>>,
     /// This player's two ranges.
@@ -110,6 +116,7 @@ impl Round {
             // The host is sent the answer as soon as there is one.
             // Everybody else is sent it after the reveal.
             answer: self.answer.filter(|_| to_host || revealed),
+            confidence: self.confidence,
             asked: self.asked,
         }
     }
@@ -184,6 +191,7 @@ pub fn host(game: &Game, now: u64) -> Host<'_> {
                     question: &round.question,
                     unit: &round.unit,
                     answer: round.answer,
+                    confidence: round.confidence,
                     n: standing.as_ref().map_or(0, |stats| stats.n),
                     hits: standing.and_then(|stats| stats.hits),
                     hits_before: round.shift(players).and_then(|shift| shift.hits_before),
@@ -276,6 +284,8 @@ pub struct Reveal {
 pub struct WallRound<'a> {
     question: &'a str,
     unit: &'a str,
+    /// The level it was asked at.
+    confidence: u8,
     stage: Stage,
     /// How many have sent the pass being taken, and how many are in.
     sent: usize,
@@ -301,6 +311,7 @@ pub struct Top<'a> {
 /// the board, never next to a range.
 #[derive(Serialize)]
 pub struct Wall<'a> {
+    /// The room's level, for the wall before the first question.
     confidence: u8,
     round: Option<WallRound<'a>>,
     top: Vec<Top<'a>>,
@@ -320,6 +331,7 @@ pub fn wall(game: &Game) -> Wall<'_> {
         round: round.map(|r| WallRound {
             question: &r.question,
             unit: &r.unit,
+            confidence: r.confidence,
             stage: r.stage,
             sent: r.in_so_far(players),
             of: players.len(),
@@ -506,6 +518,23 @@ mod tests {
         let view = player(&game, &key).unwrap();
         assert!(view.round.is_none());
         assert!(view.mine_before.is_none());
+    }
+
+    #[test]
+    fn every_screen_judges_a_question_by_the_level_it_was_asked_at() {
+        let (mut game, key) = room();
+        game.reveal().unwrap();
+        game.set_confidence(50).unwrap();
+        assert_eq!(host(&game, 1000).round.map(|r| r.confidence), Some(90));
+        assert_eq!(
+            player(&game, &key).unwrap().round.map(|r| r.confidence),
+            Some(90)
+        );
+        assert_eq!(wall(&game).round.map(|r| r.confidence), Some(90));
+        game.ask("Next", "", None, 2000).unwrap();
+        let view = host(&game, 1000);
+        assert_eq!(view.round.map(|r| r.confidence), Some(50));
+        assert_eq!(view.history[0].confidence, 90);
     }
 
     #[test]
