@@ -2,9 +2,12 @@
 //!
 //! The host's view contains everything. A player's view contains their own
 //! ranges and nothing else about the question until the host reveals it.
-//! The two are built here rather than filtered in the page, because
-//! anything sent to a page can be read there.
+//! The wall, which is projected for the whole room, gets less than either:
+//! no answer and no ranges until the reveal, and then the ranges without
+//! names. The views are built here rather than filtered in the page,
+//! because anything sent to a page can be read there.
 
+use rooms::lobby::Present;
 use serde::Serialize;
 
 use crate::game::{Bound, Change, Game, Pass, Round, Score, Shift, Stage, Stats};
@@ -53,6 +56,10 @@ pub struct Past<'a> {
 #[derive(Serialize)]
 pub struct Host<'a> {
     join: &'a str,
+    /// The wall's key, for the host's "Open the wall view" link.
+    wall: &'a str,
+    /// Who is in and whose phone is connected, for the roster.
+    people: Vec<Present<'a>>,
     confidence: u8,
     players: Vec<Who<'a>>,
     round: Option<Asked<'a>>,
@@ -122,12 +129,12 @@ impl Round {
 }
 
 /// The host's view, which holds everything about the question.
-pub fn host(game: &Game) -> Host<'_> {
+pub fn host(game: &Game, now: u64) -> Host<'_> {
+    let players = &game.lobby.players;
     let round = game.round();
     let answers = round
         .map(|round| {
-            let mut answers: Vec<Answer<'_>> = game
-                .players
+            let mut answers: Vec<Answer<'_>> = players
                 .iter()
                 .filter_map(|player| {
                     let bound = round.standing(&player.key)?;
@@ -145,10 +152,11 @@ pub fn host(game: &Game) -> Host<'_> {
         })
         .unwrap_or_default();
     Host {
-        join: &game.join,
+        join: &game.lobby.join,
+        wall: &game.lobby.wall,
+        people: game.lobby.roster(now),
         confidence: game.confidence,
-        players: game
-            .players
+        players: players
             .iter()
             .map(|player| Who {
                 name: &player.name,
@@ -157,11 +165,11 @@ pub fn host(game: &Game) -> Host<'_> {
             })
             .collect(),
         round: round.map(|round| round.asked(true)),
-        before: round.and_then(|r| r.stats(&game.players, Pass::First)),
-        after: round.and_then(|r| r.stats(&game.players, Pass::Second)),
-        standing: round.and_then(|r| r.standing_stats(&game.players)),
-        shift: round.and_then(|r| r.shift(&game.players)),
-        changes: round.map(|r| r.changes(&game.players)).unwrap_or_default(),
+        before: round.and_then(|r| r.stats(players, Pass::First)),
+        after: round.and_then(|r| r.stats(players, Pass::Second)),
+        standing: round.and_then(|r| r.standing_stats(players)),
+        shift: round.and_then(|r| r.shift(players)),
+        changes: round.map(|r| r.changes(players)).unwrap_or_default(),
         answers,
         history: game
             .rounds
@@ -170,7 +178,7 @@ pub fn host(game: &Game) -> Host<'_> {
             .rev()
             .skip(1)
             .map(|(index, round)| {
-                let standing = round.standing_stats(&game.players);
+                let standing = round.standing_stats(players);
                 Past {
                     index,
                     question: &round.question,
@@ -178,9 +186,7 @@ pub fn host(game: &Game) -> Host<'_> {
                     answer: round.answer,
                     n: standing.as_ref().map_or(0, |stats| stats.n),
                     hits: standing.and_then(|stats| stats.hits),
-                    hits_before: round
-                        .shift(&game.players)
-                        .and_then(|shift| shift.hits_before),
+                    hits_before: round.shift(players).and_then(|shift| shift.hits_before),
                 }
             })
             .collect(),
@@ -191,6 +197,7 @@ pub fn host(game: &Game) -> Host<'_> {
 /// One player's own view. `key` is theirs.
 pub fn player<'a>(game: &'a Game, key: &str) -> Option<Player<'a>> {
     let player = game.player(key)?;
+    let players = &game.lobby.players;
     let round = game.round();
     let revealed = round.is_some_and(|r| r.stage == Stage::Revealed);
     let shown = round.filter(|_| revealed);
@@ -204,11 +211,11 @@ pub fn player<'a>(game: &'a Game, key: &str) -> Option<Player<'a>> {
         round: round.map(|round| round.asked(false)),
         mine_before,
         mine_after,
-        submitted: round.map_or(0, |r| r.in_so_far(&game.players)),
-        players: game.players.len(),
-        standing: shown.and_then(|r| r.standing_stats(&game.players)),
-        before: shown.and_then(|r| r.stats(&game.players, Pass::First)),
-        shift: shown.and_then(|r| r.shift(&game.players)),
+        submitted: round.map_or(0, |r| r.in_so_far(players)),
+        players: players.len(),
+        standing: shown.and_then(|r| r.standing_stats(players)),
+        before: shown.and_then(|r| r.stats(players, Pass::First)),
+        shift: shown.and_then(|r| r.shift(players)),
         hit: match (answer, standing) {
             (Some(answer), Some(bound)) => Some(bound.contains(answer)),
             _ => None,
@@ -218,7 +225,7 @@ pub fn player<'a>(game: &'a Game, key: &str) -> Option<Player<'a>> {
             _ => None,
         },
         mine_changed: shown.and_then(|r| {
-            r.changes(&game.players)
+            r.changes(players)
                 .into_iter()
                 .find(|change| change.name == player.name)
         }),
@@ -231,16 +238,146 @@ pub fn player<'a>(game: &'a Game, key: &str) -> Option<Player<'a>> {
     })
 }
 
+/// How many of the board the wall names.
+const WALL_TOP: usize = 3;
+
+/// One range on the wall, without whose it was.
+#[derive(Serialize)]
+pub struct Range {
+    low: f64,
+    high: f64,
+    hit: Option<bool>,
+}
+
+/// The two passes compared, as counts only.
+#[derive(Serialize)]
+pub struct Twice {
+    /// People who answered both times.
+    n: usize,
+    /// Of those, how many changed their range.
+    moved: usize,
+    hits_before: Option<usize>,
+    hits_after: Option<usize>,
+}
+
+/// What the wall shows once a question is revealed.
+#[derive(Serialize)]
+pub struct Reveal {
+    answer: Option<f64>,
+    /// Everybody's final range, lowest first, with no names.
+    ranges: Vec<Range>,
+    /// The median lower and upper bound.
+    middle: Option<(f64, f64)>,
+    hits: Option<usize>,
+    twice: Option<Twice>,
+}
+
+#[derive(Serialize)]
+pub struct WallRound<'a> {
+    question: &'a str,
+    unit: &'a str,
+    stage: Stage,
+    /// How many have sent the pass being taken, and how many are in.
+    sent: usize,
+    of: usize,
+    /// Only once the host has revealed it.
+    reveal: Option<Reveal>,
+}
+
+/// Somebody at the top of the board.
+#[derive(Serialize)]
+pub struct Top<'a> {
+    name: &'a str,
+    hits: usize,
+    scored: usize,
+}
+
+/// The game's part of the wall, which is projected for the whole room.
+///
+/// Before the reveal: the question, its unit, the stage and how many have
+/// sent a range. Never the answer, and never a range, because either one
+/// on the wall would anchor everybody's next answer. After the reveal:
+/// the answer and the ranges as unnamed bars. Names only for the top of
+/// the board, never next to a range.
+#[derive(Serialize)]
+pub struct Wall<'a> {
+    confidence: u8,
+    round: Option<WallRound<'a>>,
+    top: Vec<Top<'a>>,
+}
+
+pub fn wall(game: &Game) -> Wall<'_> {
+    let players = &game.lobby.players;
+    let round = game.round();
+    let revealed = round.is_some_and(|r| r.stage == Stage::Revealed);
+    let scores = if revealed {
+        game.scores_revealed()
+    } else {
+        Vec::new()
+    };
+    Wall {
+        confidence: game.confidence,
+        round: round.map(|r| WallRound {
+            question: &r.question,
+            unit: &r.unit,
+            stage: r.stage,
+            sent: r.in_so_far(players),
+            of: players.len(),
+            reveal: revealed.then(|| {
+                let mut ranges: Vec<Range> = players
+                    .iter()
+                    .filter_map(|p| r.standing(&p.key))
+                    .map(|b| Range {
+                        low: b.low,
+                        high: b.high,
+                        hit: r.answer.map(|a| b.contains(a)),
+                    })
+                    .collect();
+                ranges.sort_by(|a, b| a.low.total_cmp(&b.low).then(a.high.total_cmp(&b.high)));
+                let standing = r.standing_stats(players);
+                Reveal {
+                    answer: r.answer,
+                    ranges,
+                    middle: standing.as_ref().map(|s| (s.median_low, s.median_high)),
+                    hits: standing.and_then(|s| s.hits),
+                    twice: r.shift(players).map(|shift| Twice {
+                        n: shift.n,
+                        moved: shift.moved,
+                        hits_before: shift.hits_before,
+                        hits_after: shift.hits_after,
+                    }),
+                }
+            }),
+        }),
+        top: scores
+            .iter()
+            .filter(|score| score.scored > 0)
+            .take(WALL_TOP)
+            .filter_map(|score| {
+                // Borrowed from the lobby rather than the score, which
+                // owns its copy.
+                let name = players.iter().find(|p| p.name == score.name)?;
+                Some(Top {
+                    name: &name.name,
+                    hits: score.hits,
+                    scored: score.scored,
+                })
+            })
+            .collect(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rooms::lobby::admit;
 
     /// A number that could not appear in the view by accident.
     const ANSWER: f64 = 1_234_567.0;
 
     fn room() -> (Game, String) {
         let mut game = Game::new(1000);
-        let key = game.join("Ada", 1000).unwrap();
+        let key = admit(&mut game, "Ada", None, 1000).unwrap();
         game.ask("How many?", "people", Some(ANSWER), 1000).unwrap();
         game.bound(&key, 1.0, 2.0, 1001).unwrap();
         (game, key)
@@ -258,7 +395,10 @@ mod tests {
             !before.contains("1234567"),
             "the answer was sent out early: {before}"
         );
-        assert!(json(&host(&game)).contains("1234567"), "the host has it");
+        assert!(
+            json(&host(&game, 1000)).contains("1234567"),
+            "the host has it"
+        );
 
         game.reveal().unwrap();
         assert!(json(&player(&game, &key).unwrap()).contains("1234567"));
@@ -267,7 +407,7 @@ mod tests {
     #[test]
     fn nor_does_what_anybody_else_said() {
         let (mut game, key) = room();
-        let other = game.join("Bo", 1000).unwrap();
+        let other = admit(&mut game, "Bo", None, 1000).unwrap();
         game.bound(&other, 500.0, 600.0, 1001).unwrap();
         let view = player(&game, &key).unwrap();
         assert_eq!(view.submitted, 2, "only the count");
@@ -323,12 +463,12 @@ mod tests {
     #[test]
     fn the_host_sees_both_passes_apart_and_where_the_room_ended_up() {
         let (mut game, key) = room();
-        let other = game.join("Bo", 1000).unwrap();
+        let other = admit(&mut game, "Bo", None, 1000).unwrap();
         game.bound(&other, 10.0, 20.0, 1001).unwrap();
         game.move_to(Stage::Second).unwrap();
         game.bound(&key, 5.0, 6.0, 1002).unwrap();
 
-        let view = host(&game);
+        let view = host(&game, 1000);
         assert_eq!(view.before.as_ref().map(|s| s.n), Some(2));
         assert_eq!(view.after.as_ref().map(|s| s.n), Some(1), "only Ada again");
         assert_eq!(
@@ -345,9 +485,9 @@ mod tests {
     #[test]
     fn the_host_sees_the_ranges_lowest_first() {
         let (mut game, _) = room();
-        let other = game.join("Bo", 1000).unwrap();
+        let other = admit(&mut game, "Bo", None, 1000).unwrap();
         game.bound(&other, -5.0, 0.0, 1001).unwrap();
-        let view = host(&game);
+        let view = host(&game, 1000);
         assert_eq!(view.answers.len(), 2);
         assert_eq!(view.answers[0].name, "Bo");
         assert_eq!(view.answers[0].hit, Some(false));
@@ -358,8 +498,8 @@ mod tests {
     #[test]
     fn a_room_with_no_question_in_it_still_renders() {
         let mut game = Game::new(1000);
-        let key = game.join("Ada", 1000).unwrap();
-        let view = host(&game);
+        let key = admit(&mut game, "Ada", None, 1000).unwrap();
+        let view = host(&game, 1000);
         assert!(view.round.is_none());
         assert!(view.answers.is_empty());
         assert!(view.history.is_empty());
@@ -379,10 +519,56 @@ mod tests {
         let (mut game, key) = room();
         game.ask("Second", "", None, 2000).unwrap();
         game.bound(&key, 3.0, 4.0, 2001).unwrap();
-        let view = host(&game);
+        let view = host(&game, 1000);
         assert_eq!(view.round.map(|r| r.question), Some("Second"));
         assert_eq!(view.history.len(), 1);
         assert_eq!(view.history[0].question, "How many?");
         assert_eq!(view.history[0].hits, Some(0));
+    }
+
+    #[test]
+    fn the_wall_shows_no_answer_and_no_range_before_the_reveal() {
+        let (mut game, ada) = room();
+        let bo = admit(&mut game, "Bo", None, 1000).unwrap();
+        game.bound(&bo, 777_001.0, 777_002.0, 1001).unwrap();
+        for stage in [Stage::First, Stage::Discussion, Stage::Second] {
+            game.move_to(stage).unwrap();
+            let text = json(&wall(&game));
+            for secret in ["1234567", "777001", "777002", "Ada", "Bo", &ada, &bo] {
+                assert!(!text.contains(secret), "{secret} on the wall: {text}");
+            }
+            assert!(text.contains("How many?"), "{text}");
+        }
+        let view = wall(&game);
+        let round = view.round.expect("a question is on");
+        assert_eq!(
+            (round.sent, round.of),
+            (0, 2),
+            "nobody has sent a second range"
+        );
+        assert!(round.reveal.is_none());
+        assert!(view.top.is_empty());
+    }
+
+    #[test]
+    fn the_wall_shows_the_ranges_without_names_after_the_reveal() {
+        let (mut game, _) = room();
+        let bo = admit(&mut game, "Bo", None, 1000).unwrap();
+        game.bound(&bo, 1_000_000.0, 2_000_000.0, 1001).unwrap();
+        game.reveal().unwrap();
+        let view = wall(&game);
+        let reveal = view.round.as_ref().and_then(|r| r.reveal.as_ref()).unwrap();
+        assert_eq!(reveal.answer, Some(ANSWER));
+        assert_eq!(reveal.ranges.len(), 2);
+        assert_eq!(reveal.ranges[0].high, 2.0, "lowest first");
+        assert_eq!(reveal.ranges[1].hit, Some(true));
+        assert_eq!(reveal.hits, Some(1));
+        let ranges = json(&reveal.ranges);
+        assert!(
+            !ranges.contains("Ada") && !ranges.contains("Bo"),
+            "{ranges}"
+        );
+        let top: Vec<_> = view.top.iter().map(|t| t.name).collect();
+        assert_eq!(top, ["Bo", "Ada"], "the board, by name, best first");
     }
 }
