@@ -27,6 +27,10 @@ of your ranges should contain the answer. the scoreboard counts how often
 somebody was right and how often they were narrower than the room, so that
 a hit rate cannot be bought with very wide ranges.
 
+each question keeps the level it was asked at, and its numbers are judged
+against that one. the host can change the level between questions, not
+while one is open.
+
 ## the two passes
 
 a question goes through four stages, and the host moves it on:

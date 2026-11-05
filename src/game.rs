@@ -26,6 +26,13 @@ pub const MAX_UNIT: usize = 24;
 /// same one.
 pub const CONFIDENCES: &[u8] = &[50, 80, 90, 98];
 
+/// The level a room starts at.
+pub const CONFIDENCE: u8 = 90;
+
+fn default_confidence() -> u8 {
+    CONFIDENCE
+}
+
 /// How far a question has got.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -91,6 +98,12 @@ pub struct Round {
     /// The correct answer. The host can enter it before asking or after
     /// seeing the bounds. Nobody else is sent it before the reveal.
     pub answer: Option<f64>,
+    /// How sure the room was asked to be, fixed when the question was
+    /// asked. Every number about this question is judged against it,
+    /// whatever the room's level is now. Rooms saved before it was kept
+    /// per question are given the room's level by `Room::migrate`.
+    #[serde(default = "default_confidence")]
+    pub confidence: u8,
     pub stage: Stage,
     pub asked: u64,
     /// Before the discussion, by player key.
@@ -107,6 +120,7 @@ pub struct Game {
     /// are moved into it by `Room::migrate`.
     #[serde(default)]
     pub lobby: Lobby,
+    /// The level the next question is asked at. See `Round::confidence`.
     pub confidence: u8,
     /// Oldest first; the last one is the question the room is on.
     pub rounds: Vec<Round>,
@@ -132,6 +146,20 @@ impl rooms::Room for Game {
     /// room, kept `join`, `wall` and `players` at the top level.
     fn migrate(saved: &mut serde_json::Value) {
         rooms::lobby::migrate(saved);
+        // Questions asked before each kept its own level were all judged
+        // against the room's, so that is the level they keep.
+        let Some(room) = saved.as_object_mut() else {
+            return;
+        };
+        let level = room
+            .get("confidence")
+            .cloned()
+            .unwrap_or_else(|| CONFIDENCE.into());
+        if let Some(rounds) = room.get_mut("rounds").and_then(|r| r.as_array_mut()) {
+            for round in rounds.iter_mut().filter_map(|r| r.as_object_mut()) {
+                round.entry("confidence").or_insert_with(|| level.clone());
+            }
+        }
     }
 }
 
@@ -174,7 +202,7 @@ impl Game {
     pub fn new(now: u64) -> Game {
         Game {
             lobby: Lobby::new(),
-            confidence: 90,
+            confidence: CONFIDENCE,
             rounds: Vec::new(),
             last_seen: now,
         }
@@ -192,9 +220,18 @@ impl Game {
         self.lobby.player(key)
     }
 
+    /// Sets the level the next question is asked at. Refused while a
+    /// question is open: the people who have sent a range sent it at the
+    /// old level, and everyone else is reading it off their phone.
     pub fn set_confidence(&mut self, confidence: u8) -> Result<(), &'static str> {
         if !CONFIDENCES.contains(&confidence) {
             return Err("That is not one of the confidence levels.");
+        }
+        if confidence != self.confidence && self.round().is_some_and(|r| r.stage != Stage::Revealed)
+        {
+            return Err(
+                "The level is fixed while a question is open. Change it before the next one.",
+            );
         }
         self.confidence = confidence;
         Ok(())
@@ -226,6 +263,7 @@ impl Game {
             question,
             unit: tidy(unit, MAX_UNIT),
             answer,
+            confidence: self.confidence,
             stage: Stage::First,
             asked: now,
             before: HashMap::new(),
@@ -1154,6 +1192,41 @@ mod tests {
     }
 
     #[test]
+    fn each_question_keeps_the_level_it_was_asked_at() {
+        let mut game = Game::new(1000);
+        game.set_confidence(50).unwrap();
+        game.ask("One", "", None, 1000).unwrap();
+        game.reveal().unwrap();
+        game.set_confidence(98).unwrap();
+        game.ask("Two", "", None, 2000).unwrap();
+        assert_eq!(game.rounds[0].confidence, 50, "changing it later left it");
+        assert_eq!(game.rounds[1].confidence, 98);
+    }
+
+    #[test]
+    fn the_level_cannot_change_while_a_question_is_open() {
+        let mut game = Game::new(1000);
+        game.ask("One", "", None, 1000).unwrap();
+        for stage in [Stage::First, Stage::Discussion, Stage::Second] {
+            game.move_to(stage).unwrap();
+            assert!(game.set_confidence(50).is_err(), "{stage:?}");
+            assert!(
+                game.set_confidence(90).is_ok(),
+                "the same level is no change"
+            );
+        }
+        assert_eq!(game.round().unwrap().confidence, 90);
+        game.reveal().unwrap();
+        game.set_confidence(50).unwrap();
+        assert_eq!(
+            game.round().unwrap().confidence,
+            90,
+            "the revealed one keeps it"
+        );
+        assert_eq!(game.confidence, 50, "and the next one is asked at it");
+    }
+
+    #[test]
     fn a_name_is_cut_to_length_in_characters() {
         let mut game = Game::new(1000);
         let key = admit(&mut game, &"ä".repeat(MAX_NAME + 10), None, 1000).unwrap();
@@ -1176,6 +1249,16 @@ mod tests {
         assert_eq!(game.player("K").unwrap().name, "Ada");
         assert!(!game.lobby.wall.is_empty(), "and it is given a wall");
         assert_eq!(game.confidence, 80);
+    }
+
+    #[test]
+    fn questions_saved_without_a_level_get_the_rooms() {
+        let game = load(
+            r#"{"lobby":{"join":"J","wall":"W","players":[]},"confidence":80,"rounds":[
+            {"question":"Q","unit":"","answer":null,"stage":"revealed","asked":1,
+            "before":{},"after":{}}],"last_seen":5}"#,
+        );
+        assert_eq!(game.round().unwrap().confidence, 80);
     }
 
     /// The shape the flattened lobby saved: `join`, `wall` and `players`

@@ -449,6 +449,23 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn the_level_is_fixed_while_a_question_is_open() {
+        let (app, path) = app("level");
+        let (host, _) = ready(&app).await;
+        let uri = format!("/api/h/{host}/confidence");
+        let (status, body) = call(&app, "PUT", &uri, Some(json!({"confidence": 50}))).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        ok(&app, "POST", &format!("/api/h/{host}/reveal"), None).await;
+        let view = ok(&app, "PUT", &uri, Some(json!({"confidence": 50}))).await["view"].clone();
+        assert_eq!(view["confidence"], 50);
+        assert_eq!(
+            view["round"]["confidence"], 90,
+            "the revealed one keeps its level"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
     async fn a_revealed_question_takes_no_more_bounds() {
         let (app, path) = app("closed");
         let (host, player) = ready(&app).await;

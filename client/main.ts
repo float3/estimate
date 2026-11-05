@@ -103,6 +103,8 @@ interface Asked {
   unit: string;
   stage: Stage;
   answer: number | null;
+  /** The level it was asked at, which its numbers are judged against. */
+  confidence: number;
   asked: number;
 }
 
@@ -134,6 +136,7 @@ interface Past {
   question: string;
   unit: string;
   answer: number | null;
+  confidence: number;
   n: number;
   hits: number | null;
   hits_before: number | null;
@@ -145,6 +148,7 @@ interface HostView {
   wall: string;
   /** Who is in, and whose phone is connected. */
   people: Present[];
+  /** The level the next question will be asked at. */
   confidence: number;
   players: Who[];
   round: Asked | null;
@@ -350,14 +354,25 @@ function host(key: string): void {
     roster("people", view.people, { remove });
     wallButton("wall-button", view.wall);
 
+    // The level is fixed while a question is open: whoever has sent a
+    // range sent it at this one.
+    const fixed = open !== null;
     html(
       "levels",
       [50, 80, 90, 98]
         .map(
           (level) =>
-            `<button type="button" class="chip" data-level="${level}" aria-pressed="${level === view.confidence}">${level}%</button>`,
+            `<button type="button" class="chip" data-level="${level}" aria-pressed="${level === view.confidence}"${
+              fixed && level !== view.confidence ? " disabled" : ""
+            }>${level}%</button>`,
         )
         .join(""),
+    );
+    text(
+      "levels-note",
+      fixed
+        ? "Fixed until this question is revealed. Change it before the next one."
+        : "Use the same level all evening. Each question keeps the level it was asked at.",
     );
     for (const chip of Array.from(byId("levels").children)) {
       chip.addEventListener("click", () => {
@@ -399,12 +414,12 @@ function host(key: string): void {
     }
     if (view.standing) {
       parts.push(
-        `<h3>${twice ? "Where the room ended up" : "What the room thinks"}</h3>${statsHtml(view.standing, view.confidence)}`,
+        `<h3>${twice ? "Where the room ended up" : "What the room thinks"}</h3>${statsHtml(view.standing, round.confidence)}`,
       );
     }
     if (twice && view.before) {
       parts.push(
-        `<details><summary>Before the discussion</summary>${statsHtml(view.before, view.confidence)}</details>`,
+        `<details><summary>Before the discussion</summary>${statsHtml(view.before, round.confidence)}</details>`,
       );
     }
     if (!view.standing) parts.push(`<p class="note">No ranges yet.</p>`);
@@ -480,7 +495,7 @@ function host(key: string): void {
   });
 
   function drawHistory(view: HostView): void {
-    const drawing = JSON.stringify(view.history);
+    const drawing = JSON.stringify([view.history, view.confidence]);
     if (drawing === drawnHistory) return;
     drawnHistory = drawing;
     if (view.history.length === 0) {
@@ -500,7 +515,9 @@ function host(key: string): void {
         }${
           past.hits === null
             ? ""
-            : ` ${past.hits_before === null ? "" : `${past.hits_before} → `}${past.hits} of ${past.n} ranges contained it.`
+            : ` ${past.hits_before === null ? "" : `${past.hits_before} → `}${past.hits} of ${past.n} ranges contained it${
+                past.confidence === view.confidence ? "" : `, asked at ${past.confidence}%`
+              }.`
         }</p>
         <form class="past-answer" data-index="${past.index}">
           <input type="number" step="any" inputmode="decimal"
@@ -516,10 +533,10 @@ function host(key: string): void {
 
   function draw(view: HostView): void {
     unit = view.round ? view.round.unit : "";
-    drawRoom(view);
     const round = view.round;
-    hide("asked", round === null);
     open = round && round.stage !== "revealed" ? round : null;
+    drawRoom(view);
+    hide("asked", round === null);
     // A button that is asking "Tap again" keeps asking while ranges come
     // in, and stops if the question was revealed some other way.
     const ask = byId("ask-button");
@@ -702,7 +719,7 @@ function player(key: string): void {
         ? `<p class="note">The host has not entered the answer.</p>`
         : `<p class="eyebrow">The answer</p><p class="big">${withUnit(round.answer)}</p>${verdict}`;
     const room = view.standing
-      ? `<h3>The room</h3>${statsHtml(view.standing, view.confidence)}`
+      ? `<h3>The room</h3>${statsHtml(view.standing, round.confidence)}`
       : "";
     const shift = view.shift
       ? `<h3>What the discussion did</h3>${shiftHtml(view.shift)}`
@@ -721,8 +738,8 @@ function player(key: string): void {
     last = view;
     unit = view.round ? view.round.unit : "";
     html("you", `<span class="dot"></span> You are ${esc(view.name)}`);
-    text("where", `${view.confidence}% sure`);
     const round = view.round;
+    text("where", `${round ? round.confidence : view.confidence}% sure`);
     if (!round) {
       text("p-state", "Waiting");
       text("p-question", "Waiting for the first question");
@@ -741,7 +758,7 @@ function player(key: string): void {
       "p-unit",
       (round.unit ? `Answer in ${round.unit}. ` : "") +
         (taking
-          ? `Give the range you are ${view.confidence}% sure about.`
+          ? `Give the range you are ${round.confidence}% sure about.`
           : ""),
     );
     hide("bounds-form", !taking);
@@ -817,6 +834,7 @@ interface WallGame {
   round: {
     question: string;
     unit: string;
+    confidence: number;
     stage: Stage;
     sent: number;
     of: number;
@@ -910,8 +928,8 @@ function drawWall(game: WallGame, slot: HTMLElement): void {
       "p",
       { className: "eyebrow" },
       round.stage === "revealed"
-        ? `${STAGES[round.stage]} · ranges at ${game.confidence}%`
-        : `${STAGES[round.stage]} · give a range you are ${game.confidence}% sure of`,
+        ? `${STAGES[round.stage]} · ranges at ${round.confidence}%`
+        : `${STAGES[round.stage]} · give a range you are ${round.confidence}% sure of`,
     ),
     el("p", { className: "wall-question" }, round.question),
   ];
@@ -949,9 +967,9 @@ function drawWall(game: WallGame, slot: HTMLElement): void {
   const said: string[] = [];
   const n = reveal.ranges.length;
   if (reveal.hits !== null && n > 0) {
-    const expected = Math.round((n * game.confidence) / 100);
+    const expected = Math.round((n * round.confidence) / 100);
     said.push(
-      `${reveal.hits} of ${plural(n, "range", "ranges")} contained it; at ${game.confidence}%, about ${expected} should.`,
+      `${reveal.hits} of ${plural(n, "range", "ranges")} contained it; at ${round.confidence}%, about ${expected} should.`,
     );
   }
   const twice = reveal.twice;

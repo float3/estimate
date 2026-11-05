@@ -160,3 +160,9 @@ h3 {
   );
   background-repeat: no-repeat;
 }
+
+/* The other levels while a question is open. */
+.chip:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
