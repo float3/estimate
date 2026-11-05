@@ -11,7 +11,7 @@
 
 use std::collections::HashMap;
 
-use rooms::lobby::{HasLobby, Lobby, tidy};
+use rooms::lobby::{HasLobby, Lobby, OnWall, tidy};
 use serde::{Deserialize, Serialize};
 
 /// Somebody in the room. The lobby keeps them; see `rooms::lobby`.
@@ -102,9 +102,10 @@ pub struct Round {
 #[derive(Serialize, Deserialize)]
 pub struct Game {
     /// Who is in, and the join and wall keys. The host's key is the one
-    /// the game is stored under. Flattened, so that rooms saved with
-    /// `join` and `players` at the top level load as they are.
-    #[serde(flatten)]
+    /// the game is stored under. A field of its own rather than
+    /// flattened; rooms saved with `join` and `players` at the top level
+    /// are moved into it by `Room::migrate`.
+    #[serde(default)]
     pub lobby: Lobby,
     pub confidence: u8,
     /// Oldest first; the last one is the question the room is on.
@@ -126,6 +127,12 @@ impl rooms::Room for Game {
     fn keys(&self) -> Vec<&str> {
         self.lobby.keys().collect()
     }
+
+    /// Rooms saved before the lobby, and while it was flattened into the
+    /// room, kept `join`, `wall` and `players` at the top level.
+    fn migrate(saved: &mut serde_json::Value) {
+        rooms::lobby::migrate(saved);
+    }
 }
 
 impl HasLobby for Game {
@@ -140,16 +147,26 @@ impl HasLobby for Game {
     /// Somebody the host took out. Their ranges go with them, so that
     /// nothing is kept under a key nobody holds; the room's numbers only
     /// ever counted the people in it.
-    fn left(&mut self, key: &str) {
+    fn left(&mut self, player: &Player) {
         for round in &mut self.rounds {
-            round.before.remove(key);
-            round.after.remove(key);
+            round.before.remove(&player.key);
+            round.after.remove(&player.key);
         }
     }
 
     /// What the projector shows. See `view::wall`.
-    fn wall(&self, _now: u64) -> serde_json::Value {
+    fn wall_game(&self, _now: u64) -> serde_json::Value {
         serde_json::to_value(crate::view::wall(self)).unwrap_or_default()
+    }
+
+    /// Once a question is up, it takes the wall: the QR code shrinks to a
+    /// corner for latecomers and the names give way to a count, so that
+    /// the bars at the reveal fit a projector without scrolling.
+    fn on_wall(&self, _now: u64) -> OnWall {
+        OnWall {
+            busy: self.round().is_some(),
+            ..OnWall::default()
+        }
     }
 }
 
@@ -845,6 +862,18 @@ mod tests {
     }
 
     #[test]
+    fn a_question_takes_the_wall_once_one_is_asked() {
+        let mut game = Game::new(1000);
+        assert!(
+            !game.on_wall(1000).busy,
+            "the QR code has the wall at first"
+        );
+        game.ask("How many?", "", None, 1000).unwrap();
+        assert!(game.on_wall(1000).busy);
+        assert!(game.on_wall(1000).join, "latecomers can still scan it");
+    }
+
+    #[test]
     fn a_revealed_question_takes_nothing_more_and_cannot_be_reopened() {
         let (mut game, keys) = room();
         game.ask("How many?", "", None, 1000).unwrap();
@@ -1019,7 +1048,11 @@ mod tests {
         game.ask("One", "", Some(5.0), 1000).unwrap();
         game.bound(&keys[0], 1.0, 9.0, 1001).unwrap();
         game.bound(&keys[1], 1.0, 2.0, 1001).unwrap();
-        assert_eq!(rooms::lobby::remove(&mut game, "Ada"), Ok(keys[0].clone()));
+        let ada = game.player(&keys[0]).unwrap().id;
+        assert_eq!(
+            rooms::lobby::remove(&mut game, ada).map(|p| p.key),
+            Ok(keys[0].clone())
+        );
         let round = game.round().unwrap();
         assert!(!round.before.contains_key(&keys[0]));
         assert_eq!(round.standing_stats(&game.lobby.players).unwrap().n, 1);
@@ -1127,14 +1160,53 @@ mod tests {
         assert_eq!(game.player(&key).unwrap().name.chars().count(), MAX_NAME);
     }
 
+    fn load(saved: &str) -> Game {
+        let mut saved: serde_json::Value = serde_json::from_str(saved).unwrap();
+        <Game as rooms::Room>::migrate(&mut saved);
+        serde_json::from_value(saved).unwrap()
+    }
+
     #[test]
     fn a_room_saved_before_the_lobby_loads() {
-        let saved = r#"{"join":"J","confidence":80,"players":[{"key":"K","name":"Ada"}],
-            "rounds":[],"last_seen":5}"#;
-        let game: Game = serde_json::from_str(saved).unwrap();
+        let game = load(
+            r#"{"join":"J","confidence":80,"players":[{"key":"K","name":"Ada"}],
+            "rounds":[],"last_seen":5}"#,
+        );
         assert_eq!(game.lobby.join, "J");
         assert_eq!(game.player("K").unwrap().name, "Ada");
         assert!(!game.lobby.wall.is_empty(), "and it is given a wall");
         assert_eq!(game.confidence, 80);
+    }
+
+    /// The shape the flattened lobby saved: `join`, `wall` and `players`
+    /// beside the game's own fields, with `seen` on each player.
+    #[test]
+    fn a_room_saved_with_the_lobby_flattened_loads() {
+        let game = load(
+            r#"{"join":"J","wall":"W","players":[{"key":"K1","name":"Ada","seen":3},
+            {"key":"K2","name":"ada","seen":4}],"confidence":98,"rounds":[{"question":"Q",
+            "unit":"m","answer":5.0,"stage":"revealed","asked":1,
+            "before":{"K1":{"low":1.0,"high":9.0,"at":2}},"after":{}}],"last_seen":5}"#,
+        );
+        assert_eq!(
+            (game.lobby.join.as_str(), game.lobby.wall.as_str()),
+            ("J", "W")
+        );
+        assert_eq!(game.lobby.len(), 2);
+        let (ada, other) = (game.player("K1").unwrap(), game.player("K2").unwrap());
+        assert_ne!(ada.id, other.id, "each is given an id to be removed by");
+        assert_eq!(game.round().unwrap().before["K1"].high, 9.0);
+        assert_eq!(game.scores()[0].hits, 1);
+    }
+
+    #[test]
+    fn a_room_saved_now_loads_as_it_was_saved() {
+        let (mut game, keys) = room();
+        game.ask("Q", "", Some(5.0), 1000).unwrap();
+        game.bound(&keys[1], 1.0, 9.0, 1001).unwrap();
+        let again = load(&serde_json::to_string(&game).unwrap());
+        assert_eq!(again.lobby.join, game.lobby.join);
+        assert_eq!(again.lobby.len(), 4);
+        assert_eq!(again.round().unwrap().before[&keys[1]].low, 1.0);
     }
 }

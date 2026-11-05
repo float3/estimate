@@ -199,7 +199,7 @@ pub fn router(rooms: Shared) -> Router {
 pub fn router_under(rooms: Shared, base: &str) -> Router {
     Router::new()
         .merge(site::routes_under(FILES, base))
-        .merge(lobby::routes::<Game, Shared>())
+        .merge(lobby::routes(rooms.clone()))
         .route("/api/rooms", post(open_room))
         .route("/api/h/{key}", get(host_state))
         .route("/api/h/{key}/events", get(host_events))
@@ -235,11 +235,7 @@ impl rooms::tool::Joinable for Game {
     }
 
     fn leave(&mut self, key: &str) -> bool {
-        let gone = self.lobby.remove(key).is_some();
-        if gone {
-            lobby::HasLobby::left(self, key);
-        }
-        gone
+        lobby::remove_key(self, key).is_some()
     }
 
     fn wall(&self) -> Option<&str> {
@@ -526,6 +522,60 @@ mod tests {
         let _ = std::fs::remove_file(&path);
     }
 
+    /// A state file as the server wrote it before this version: one
+    /// room saved with the lobby flattened into it, and one saved before
+    /// the lobby, with no wall key.
+    #[tokio::test]
+    async fn rooms_saved_in_the_older_shapes_load_and_work() {
+        let path = std::env::temp_dir().join(format!(
+            "estimate-test-old-shapes-{}.json",
+            std::process::id()
+        ));
+        let now = now_ms();
+        let flat = json!({
+            "join": "JOIN1", "wall": "WALL1", "confidence": 90, "last_seen": now,
+            "players": [{"key": "P1", "name": "Ada", "seen": now}],
+            "rounds": [{"question": "How many?", "unit": "", "answer": 5.0,
+                "stage": "first", "asked": now,
+                "before": {"P1": {"low": 1.0, "high": 9.0, "at": now}}, "after": {}}],
+        });
+        let older = json!({
+            "join": "JOIN2", "confidence": 50, "last_seen": now, "rounds": [],
+            "players": [{"key": "P2", "name": "Bo"}],
+        });
+        std::fs::write(&path, json!({"HOST1": flat, "HOST2": older}).to_string()).unwrap();
+        let app = router(Rooms::load(&path, 4));
+
+        let view = ok(&app, "GET", "/api/h/HOST1", None).await["view"].clone();
+        assert_eq!(view["standing"]["n"], 1);
+        assert_eq!(view["people"][0]["name"], "Ada");
+        assert_eq!(
+            ok(&app, "GET", "/api/p/P1", None).await["view"]["name"],
+            "Ada"
+        );
+        assert_eq!(ok(&app, "GET", "/api/j/JOIN1", None).await["players"], 1);
+        let wall = ok(&app, "GET", "/api/w/WALL1", None).await;
+        assert_eq!(wall["view"]["game"]["round"]["question"], "How many?");
+
+        let view = ok(&app, "GET", "/api/h/HOST2", None).await["view"].clone();
+        assert_eq!(view["confidence"], 50);
+        assert_eq!(view["people"][0]["name"], "Bo");
+        let wall = view["wall"].as_str().expect("given a wall key").to_string();
+        ok(&app, "GET", &format!("/api/w/{wall}"), None).await;
+
+        let kept = std::fs::read_dir(std::env::temp_dir())
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .any(|entry| {
+                entry.file_name().to_string_lossy().starts_with(&format!(
+                    "{}.bad-",
+                    path.file_name().unwrap().to_string_lossy()
+                ))
+            });
+        assert!(!kept, "nothing failed to load");
+        let _ = std::fs::remove_file(&path);
+    }
+
     /// The join key of the room `host` runs, and its wall key.
     async fn keys_of(app: &Router, host: &str) -> (String, String) {
         let view = ok(app, "GET", &format!("/api/h/{host}"), None).await["view"].clone();
@@ -587,23 +637,28 @@ mod tests {
         )
         .await;
 
+        let id = ok(&app, "GET", &format!("/api/h/{host}"), None).await["view"]["people"][0]["id"]
+            .clone();
         let (status, _) = call(
             &app,
             "POST",
             &format!("/api/h/{ada}/remove"),
-            Some(json!({"name": "Ada"})),
+            Some(json!({ "id": id })),
         )
         .await;
         assert_eq!(status, StatusCode::NOT_FOUND, "a player cannot remove");
 
-        let left = ok(
+        let (status, body) = call(
             &app,
             "POST",
             &format!("/api/h/{host}/remove"),
-            Some(json!({"name": "Ada"})),
+            Some(json!({ "id": id })),
         )
         .await;
-        assert_eq!(left["view"]["people"], json!([]));
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        assert_eq!(body, Value::Null, "nothing but the status");
+        let view = ok(&app, "GET", &format!("/api/h/{host}"), None).await["view"].clone();
+        assert_eq!(view["people"], json!([]));
 
         let (status, _) = call(&app, "GET", &format!("/api/p/{ada}"), None).await;
         assert_eq!(status, StatusCode::NOT_FOUND);
