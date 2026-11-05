@@ -271,10 +271,22 @@ function host(key: string): void {
   show("host");
   const at = (path: string) => `/api/h/${encodeURIComponent(key)}${path}`;
   let answerFor: number | null = null;
+  /** The question still being answered, which asking another one ends. */
+  let open: Asked | null = null;
 
   text("where", "You are the host");
 
   onSubmit("ask-form", async () => {
+    if (
+      open &&
+      !confirm(
+        `“${open.question}” has not been revealed. Asking the next question reveals it to everybody now${
+          open.stage === "first" ? ", without a discussion or a second range" : ""
+        }. Ask anyway?`,
+      )
+    ) {
+      return;
+    }
     await api("POST", at("/ask"), {
       question: byId<HTMLInputElement>("question").value,
       unit: byId<HTMLInputElement>("unit").value,
@@ -488,6 +500,8 @@ function host(key: string): void {
     drawRoom(view);
     const round = view.round;
     hide("asked", round === null);
+    open = round && round.stage !== "revealed" ? round : null;
+    text("ask-button", open ? "Reveal this one and ask" : "Ask the room");
     if (round) {
       text("h-state", STAGES[round.stage]);
       text("h-question", round.question);
