@@ -127,6 +127,14 @@ interface Score {
   answered: number;
   scored: number;
   hits: number;
+  /** How many should have held the answer, at each question's level. */
+  expected: number;
+  /** The level, when every scored question was asked at the same one. */
+  level: number | null;
+  calibration: "narrow" | "wide" | "right" | null;
+  /** The interval score's two parts, averaged; lower is better. */
+  width_cost: number | null;
+  miss_cost: number | null;
   tighter: number;
   changed_mind: number;
 }
@@ -202,6 +210,27 @@ function facts(rows: [string, string][]): string {
   return `<div class="facts">${rows
     .map(([name, said]) => `<div class="fact"><span>${name}</span>${said}</div>`)
     .join("")}</div>`;
+}
+
+/** An interval score, to two places, or one once it is in the tens. */
+const points = (cost: number): string => cost.toFixed(cost >= 10 ? 1 : 2);
+
+const VERDICT: Record<"narrow" | "wide" | "right", string> = {
+  narrow: "your ranges are too narrow",
+  wide: "your ranges are wider than they need to be",
+  right: "that is about right",
+};
+
+/** "7 of 10 contained it; at 90% about 9 should, so your ranges are too
+ *  narrow." What the game is there to teach. */
+function calibrationLine(score: Score): string {
+  const at = score.level === null ? "at the levels asked" : `at ${score.level}%`;
+  const said = `${score.hits} of ${score.scored} contained the answer; ${at} about ${Math.round(score.expected)} should`;
+  return score.calibration === null
+    ? `${said}.`
+    : score.calibration === "right"
+      ? `${said}, and ${VERDICT.right}.`
+      : `${said}, so ${VERDICT[score.calibration]}.`;
 }
 
 /** The room's numbers for one pass. */
@@ -456,23 +485,43 @@ function host(key: string): void {
       return;
     }
     const scored = view.scores.some((score) => score.scored > 0);
+    const short: Record<"narrow" | "wide" | "right", string> = {
+      narrow: "too narrow",
+      wide: "too wide",
+      right: "about right",
+    };
     html(
       "board",
       `<h3>The evening so far</h3><div class="scroll"><table><thead><tr>
-        <th>Who</th><th>Answered</th>${scored ? "<th>In</th>" : ""}<th>Tighter</th><th>Changed</th>
+        <th>Who</th>${scored ? "<th>Score</th><th>In</th>" : "<th>Answered</th>"}<th>Changed</th>
       </tr></thead><tbody>${view.scores
-        .map(
-          (score) => `<tr>
-          <td>${esc(score.name)}</td><td>${score.answered}</td>
-          ${scored ? `<td>${score.scored ? `${score.hits}/${score.scored} · ${Math.round((100 * score.hits) / score.scored)}%` : "—"}</td>` : ""}
-          <td>${score.tighter}</td><td>${score.changed_mind}</td>
-        </tr>`,
-        )
+        .map((score) => {
+          const cost =
+            score.width_cost === null || score.miss_cost === null
+              ? "—"
+              : `<b>${points(score.width_cost + score.miss_cost)}</b><small>${points(score.width_cost)} + ${points(score.miss_cost)}</small>`;
+          const held = score.scored
+            ? `${score.hits}/${score.scored}<small>aim ${Math.round(score.expected)}${
+                score.calibration ? ` · ${short[score.calibration]}` : ""
+              }</small>`
+            : "—";
+          return `<tr>
+          <td>${esc(score.name)}</td>
+          ${scored ? `<td class="cost">${cost}</td><td class="cost">${held}</td>` : `<td>${score.answered}</td>`}
+          <td>${score.changed_mind}</td>
+        </tr>`;
+        })
         .join("")}</tbody></table></div>
-      <p class="note">“In” counts the ranges that contained the answer.
-        “Tighter” counts the questions where the range was
-        narrower than the room's median range. “Changed” counts the questions
-        where the second range differed from the first.</p>`,
+      <p class="note">Lowest score first, like golf. The score is the width
+        of each range plus what its miss cost, averaged over the questions
+        with an answer. A miss costs 2 ÷ (1 − the level) times the distance
+        it missed by: 20 times at 90%. A range wide enough to hold
+        everything loses on width; one too narrow to hold the answer loses
+        on misses. Distances are in powers of ten when every number in a
+        question is above zero, and in the room's median first range
+        otherwise. “In” counts the ranges that held the answer, against
+        how many should have. “Changed” counts the questions where the
+        second range differed from the first.</p>`,
     );
   }
 
@@ -724,12 +773,14 @@ function player(key: string): void {
     const shift = view.shift
       ? `<h3>What the discussion did</h3>${shiftHtml(view.shift)}`
       : "";
+    const score = view.score;
     const evening =
-      view.score && view.score.scored
-        ? `<p class="note">Your evening: ${view.score.hits} of ${view.score.scored}
-           contained the answer, ${view.score.tighter} of ${view.score.answered}
-           ranges came in tighter than the room's, and the discussion moved you
-           on ${plural(view.score.changed_mind, "question", "questions")}.</p>`
+      score && score.scored && score.width_cost !== null && score.miss_cost !== null
+        ? `<h3>Your evening</h3><p class="calibration">${esc(calibrationLine(score))}</p>
+           <p class="note">Your score is ${points(score.width_cost + score.miss_cost)}:
+           ${points(score.width_cost)} for the width of your ranges and
+           ${points(score.miss_cost)} for the misses. Lower is better. The
+           discussion moved you on ${plural(score.changed_mind, "question", "questions")}.</p>`
         : "";
     return `<div class="panel">${answer}${mineHtml(view)}${shift}${room}${evening}</div>`;
   }
@@ -840,7 +891,7 @@ interface WallGame {
     of: number;
     reveal: WallReveal | null;
   } | null;
-  top: { name: string; hits: number; scored: number }[];
+  top: { name: string; hits: number; scored: number; cost: number }[];
 }
 
 /** Where a value sits across the chart, from 0 to 1. A log scale when
@@ -987,7 +1038,9 @@ function drawWall(game: WallGame, slot: HTMLElement): void {
         "ol",
         { className: "wall-top" },
         el("li", { className: "eyebrow" }, "Top of the board"),
-        ...game.top.map((t) => el("li", {}, el("b", {}, t.name), ` ${t.hits} of ${t.scored}`)),
+        ...game.top.map((t) =>
+          el("li", {}, el("b", {}, t.name), ` ${points(t.cost)} · ${t.hits} of ${t.scored}`),
+        ),
       ),
     );
   }

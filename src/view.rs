@@ -300,6 +300,8 @@ pub struct Top<'a> {
     name: &'a str,
     hits: usize,
     scored: usize,
+    /// Their interval score; see `game::interval_cost`.
+    cost: f64,
 }
 
 /// The game's part of the wall, which is projected for the whole room.
@@ -373,6 +375,7 @@ pub fn wall(game: &Game) -> Wall<'_> {
                     name: &name.name,
                     hits: score.hits,
                     scored: score.scored,
+                    cost: score.cost()?,
                 })
             })
             .collect(),
