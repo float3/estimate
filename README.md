@@ -79,7 +79,10 @@ put the wall on the projector, not the host screen: the host screen shows
 the answer and every named range. before the reveal the wall shows the
 question, the stage and how many have sent a range, and never the answer
 or a range. after it, the answer and everybody's ranges as bars without
-names, and the top three of the evening by name.
+names, and the top three of the evening by name. the host's screen and
+each phone show the same picture after the reveal, with a two-pass
+question's first ranges drawn faintly behind the second, and on a phone
+that player's own range outlined.
 
 a name already in the room is refused while that person's phone is
 connected, so two people called Alex stay two people; a phone that kept
