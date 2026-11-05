@@ -60,6 +60,10 @@
 
     <form class="panel" id="ask-form">
       <h2>Ask a question</h2>
+      <div id="next-box" hidden>
+        <p class="note" id="next-what"></p>
+        <div class="actions"><button class="button primary" id="ask-next" type="button">Ask next</button></div>
+      </div>
       <label for="question">Question</label>
       <input id="question" maxlength="300" required placeholder="How many lamp posts are there in Munich?">
       <div class="two">
@@ -75,6 +79,15 @@
       <p class="note">The answer stays on this screen until you reveal it. You
         can also look it up afterwards.</p>
       <div class="actions"><button class="button primary" id="ask-button" type="submit">Ask the room</button></div>
+      <details id="queue-box">
+        <summary id="queue-summary">Line up a list of questions</summary>
+        <label for="queue-text">One per line: question | answer | unit</label>
+        <textarea id="queue-text" rows="6" spellcheck="false" placeholder="How tall is the Olympiaturm? | 291 | m&#10;How many people live in Munich? | 1,510,000"></textarea>
+        <p class="note">The answer and the unit can be left out. Nobody but
+          you sees the list. “Ask next” asks the first one and takes it
+          off.</p>
+        <div class="actions"><button class="button" id="queue-save" type="button">Save the list</button></div>
+      </details>
     </form>
 
     <section class="panel" id="asked" hidden>

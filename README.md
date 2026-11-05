@@ -50,6 +50,10 @@ a question goes through four stages, and the host moves it on:
 | Second ranges | taking it again, prefilled with the first |
 | Revealed | the answer, the room's numbers, and what the discussion did |
 
+the host can paste the evening's questions in advance, one per line as
+`question | answer | unit`, and ask them in turn with "Ask next". only the
+host is sent the list.
+
 the host can go back a stage for somebody who was out of the room, and can
 reveal from any stage. a question revealed straight from the first pass has
 no second pass. a two-pass question reports who changed their range, who

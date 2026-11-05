@@ -150,6 +150,38 @@ interface Past {
   hits_before: number | null;
 }
 
+/** A question lined up: see `game::Queued`. */
+interface Queued {
+  question: string;
+  answer: number | null;
+  unit: string;
+}
+
+/** The list as the host would type it, for the field it is edited in. */
+function queueText(queue: Queued[]): string {
+  return queue
+    .map((q) => {
+      const parts = [q.question];
+      if (q.answer !== null || q.unit) parts.push(q.answer === null ? "" : String(q.answer));
+      if (q.unit) parts.push(q.unit);
+      return parts.join(" | ");
+    })
+    .join("\n");
+}
+
+/** Sets a button's label, unless it is asking "Tap again" (confirmTap):
+ *  then the label is kept for afterwards, and the question is dropped if
+ *  there is nothing left to confirm. */
+function label(button: HTMLElement, said: string, asking: boolean): void {
+  if (button.dataset.armed !== "1") button.textContent = said;
+  else if (asking) button.dataset.said = said;
+  else {
+    delete button.dataset.armed;
+    button.classList.remove("armed");
+    button.textContent = said;
+  }
+}
+
 interface HostView {
   join: string;
   /** The wall's key, for "Open the wall view". */
@@ -170,6 +202,8 @@ interface HostView {
   reveal: Reveal | null;
   history: Past[];
   scores: Score[];
+  /** The questions lined up. Only the host is sent them. */
+  queue: Queued[];
 }
 
 interface PlayerView {
@@ -355,6 +389,59 @@ function host(key: string): void {
     unsign(byId("ask-form"));
     fail("");
   });
+
+  onClick("ask-next", async () => {
+    if (
+      open &&
+      !confirmTap(
+        byId("ask-next"),
+        open.stage === "first"
+          ? "Reveal it with no second range? Tap again"
+          : "Reveal it to everybody? Tap again",
+      )
+    ) {
+      return;
+    }
+    await api("POST", at("/next"));
+    fail("");
+  });
+
+  // The list is the host's to edit: a view arriving while they type does
+  // not replace it, and saving does.
+  let queueEdited = false;
+  let drawnQueue = "";
+  byId("queue-text").addEventListener("input", () => {
+    queueEdited = true;
+  });
+  onClick("queue-save", async () => {
+    await api("PUT", at("/queue"), { text: byId<HTMLTextAreaElement>("queue-text").value });
+    queueEdited = false;
+    drawnQueue = "";
+    fail("");
+  });
+
+  function drawQueue(view: HostView): void {
+    const next = view.queue[0];
+    hide("next-box", !next);
+    if (next) {
+      text(
+        "next-what",
+        `Next of ${view.queue.length}: “${next.question}”${next.answer === null ? "" : " (answer ready)"}`,
+      );
+      label(byId("ask-next"), open ? "Reveal this one and ask next" : "Ask next", open !== null);
+    }
+    text(
+      "queue-summary",
+      view.queue.length === 0
+        ? "Line up a list of questions"
+        : `${plural(view.queue.length, "question", "questions")} lined up: see or change the list`,
+    );
+    const drawing = queueText(view.queue);
+    if (!queueEdited && drawing !== drawnQueue) {
+      drawnQueue = drawing;
+      byId<HTMLTextAreaElement>("queue-text").value = drawing;
+    }
+  }
 
   onSubmit("answer-form", async () => {
     await api("PUT", at("/answer"), { answer: value("true-answer") });
@@ -595,15 +682,8 @@ function host(key: string): void {
     hide("asked", round === null);
     // A button that is asking "Tap again" keeps asking while ranges come
     // in, and stops if the question was revealed some other way.
-    const ask = byId("ask-button");
-    const label = open ? "Reveal this one and ask" : "Ask the room";
-    if (ask.dataset.armed !== "1") ask.textContent = label;
-    else if (open) ask.dataset.said = label;
-    else {
-      delete ask.dataset.armed;
-      ask.classList.remove("armed");
-      ask.textContent = label;
-    }
+    label(byId("ask-button"), open ? "Reveal this one and ask" : "Ask the room", open !== null);
+    drawQueue(view);
     if (round) {
       text("h-state", STAGES[round.stage]);
       text("h-question", round.question);

@@ -10,7 +10,7 @@
 use rooms::lobby::Present;
 use serde::Serialize;
 
-use crate::game::{Bound, Change, Game, Pass, Round, Score, Shift, Stage, Stats};
+use crate::game::{Bound, Change, Game, Pass, Queued, Round, Score, Shift, Stage, Stats};
 
 #[derive(Serialize)]
 pub struct Who<'a> {
@@ -81,6 +81,8 @@ pub struct Host<'a> {
     reveal: Option<Reveal>,
     /// Newest first, the question on now excluded.
     history: Vec<Past<'a>>,
+    /// The questions lined up, answers and all. The host's alone.
+    queue: &'a [Queued],
     scores: Vec<Score>,
 }
 
@@ -206,6 +208,7 @@ pub fn host(game: &Game, now: u64) -> Host<'_> {
             })
             .collect(),
         scores: game.scores(),
+        queue: &game.queue,
     }
 }
 
@@ -607,6 +610,20 @@ mod tests {
         let wall = wall(&game);
         let reveal = wall.round.and_then(|r| r.reveal).unwrap();
         assert!(reveal.ranges.iter().all(|r| !r.mine));
+    }
+
+    #[test]
+    fn the_questions_lined_up_reach_the_host_and_nobody_else() {
+        let (mut game, key) = room();
+        game.set_queue(crate::game::parse_queue("Secret question | 7654321").unwrap())
+            .unwrap();
+        assert!(json(&host(&game, 1000)).contains("7654321"));
+        for text in [json(&player(&game, &key).unwrap()), json(&wall(&game))] {
+            assert!(
+                !text.contains("7654321") && !text.contains("Secret"),
+                "{text}"
+            );
+        }
     }
 
     #[test]
