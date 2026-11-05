@@ -54,13 +54,25 @@ nothing of the first pass is shown to players during the discussion. the
 host sees it and can read out as much of it as they like; putting the
 spread on everybody's phone would anchor the second answer to it.
 
-## three links
+## four links
 
 | | |
 | --- | --- |
 | `/h/<key>` | runs the room. Keep it; it is the only way back in. |
-| `/j/<key>` | joins it. This is the one on the wall. |
+| `/j/<key>` | joins it. Its QR code is on the wall. |
 | `/p/<key>` | one player's own, kept by their phone. |
+| `/w/<key>` | the wall, for the projector. It can change nothing. |
+
+put the wall on the projector, not the host screen: the host screen shows
+the answer and every named range. before the reveal the wall shows the
+question, the stage and how many have sent a range, and never the answer
+or a range. after it, the answer and everybody's ranges as bars without
+names, and the top three of the evening by name.
+
+a name already in the room is refused while that person's phone is
+connected, so two people called Alex stay two people; a phone that kept
+its link always gets back in. the host can take somebody out from the
+list of who is in, and their link stops working.
 
 the key in the link is the only access control: 24 random characters, and
 no accounts. anyone with the host link can run the room. that is

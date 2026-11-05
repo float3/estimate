@@ -11,13 +11,15 @@
 
 use std::collections::HashMap;
 
+use rooms::lobby::{HasLobby, Lobby, tidy};
 use serde::{Deserialize, Serialize};
 
-pub const MAX_PLAYERS: usize = 200;
+/// Somebody in the room. The lobby keeps them; see `rooms::lobby`.
+pub use rooms::lobby::Player;
+
 pub const MAX_ROUNDS: usize = 200;
 pub const MAX_QUESTION: usize = 300;
 pub const MAX_UNIT: usize = 24;
-pub const MAX_NAME: usize = 32;
 
 /// How sure players are meant to be. A fixed list rather than any number,
 /// because the hit rate only means something if the whole room uses the
@@ -81,12 +83,6 @@ impl Bound {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct Player {
-    pub key: String,
-    pub name: String,
-}
-
-#[derive(Serialize, Deserialize)]
 pub struct Round {
     pub question: String,
     /// What the number is in: "years", "km", "€". Shown beside the
@@ -105,11 +101,12 @@ pub struct Round {
 
 #[derive(Serialize, Deserialize)]
 pub struct Game {
-    /// The key in the players' links. The host's key is the one the game
-    /// is stored under.
-    pub join: String,
+    /// Who is in, and the join and wall keys. The host's key is the one
+    /// the game is stored under. Flattened, so that rooms saved with
+    /// `join` and `players` at the top level load as they are.
+    #[serde(flatten)]
+    pub lobby: Lobby,
     pub confidence: u8,
-    pub players: Vec<Player>,
     /// Oldest first; the last one is the question the room is on.
     pub rounds: Vec<Round>,
     pub last_seen: u64,
@@ -125,25 +122,42 @@ impl rooms::Room for Game {
     fn expired(&self, now: u64) -> bool {
         self.last_seen + rooms::DAY_MS < now
     }
+
+    fn keys(&self) -> Vec<&str> {
+        self.lobby.keys().collect()
+    }
 }
 
-/// Trims, collapses internal whitespace, and cuts to `max` characters
-/// rather than bytes, so that names in any script survive.
-fn tidy(text: &str, max: usize) -> String {
-    text.split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .chars()
-        .take(max)
-        .collect()
+impl HasLobby for Game {
+    fn lobby(&self) -> &Lobby {
+        &self.lobby
+    }
+
+    fn lobby_mut(&mut self) -> &mut Lobby {
+        &mut self.lobby
+    }
+
+    /// Somebody the host took out. Their ranges go with them, so that
+    /// nothing is kept under a key nobody holds; the room's numbers only
+    /// ever counted the people in it.
+    fn left(&mut self, key: &str) {
+        for round in &mut self.rounds {
+            round.before.remove(key);
+            round.after.remove(key);
+        }
+    }
+
+    /// What the projector shows. See `view::wall`.
+    fn wall(&self, _now: u64) -> serde_json::Value {
+        serde_json::to_value(crate::view::wall(self)).unwrap_or_default()
+    }
 }
 
 impl Game {
     pub fn new(now: u64) -> Game {
         Game {
-            join: rooms::key::new(),
+            lobby: Lobby::new(),
             confidence: 90,
-            players: Vec::new(),
             rounds: Vec::new(),
             last_seen: now,
         }
@@ -158,34 +172,7 @@ impl Game {
     }
 
     pub fn player(&self, key: &str) -> Option<&Player> {
-        self.players.iter().find(|p| p.key == key)
-    }
-
-    /// Takes a player's name and returns the key their phone stores.
-    ///
-    /// A name already in the room returns that player's existing key, so
-    /// that a phone which lost its key to a closed tab or a cleared
-    /// browser can rejoin. It also lets anyone in the room take over a
-    /// name by typing it exactly. That is an acceptable trade for a group
-    /// of people sitting together, and would not be for anything else.
-    pub fn join(&mut self, name: &str, now: u64) -> Result<String, &'static str> {
-        let name = tidy(name, MAX_NAME);
-        if name.is_empty() {
-            return Err("Please give a name, so the host knows who is in.");
-        }
-        if let Some(player) = self.players.iter().find(|p| p.name == name) {
-            return Ok(player.key.clone());
-        }
-        if self.players.len() >= MAX_PLAYERS {
-            return Err("This room is full.");
-        }
-        let key = rooms::key::new();
-        self.players.push(Player {
-            key: key.clone(),
-            name,
-        });
-        self.last_seen = now;
-        Ok(key)
+        self.lobby.player(key)
     }
 
     pub fn set_confidence(&mut self, confidence: u8) -> Result<(), &'static str> {
@@ -642,6 +629,7 @@ impl Game {
 
     fn scores_over(&self, counted: impl Fn(&Round) -> bool) -> Vec<Score> {
         let mut scores: Vec<Score> = self
+            .lobby
             .players
             .iter()
             .map(|player| {
@@ -664,7 +652,7 @@ impl Game {
                             score.hits += 1;
                         }
                     }
-                    if let Some(stats) = round.standing_stats(&self.players)
+                    if let Some(stats) = round.standing_stats(&self.lobby.players)
                         && bound.width() < stats.median_width
                     {
                         score.tighter += 1;
@@ -700,12 +688,13 @@ impl Game {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rooms::lobby::{MAX_NAME, PRESENT_MS, admit};
 
     fn room() -> (Game, Vec<String>) {
         let mut game = Game::new(1000);
         let keys = ["Ada", "Bo", "Cy", "Di"]
             .iter()
-            .map(|name| game.join(name, 1000).expect("the room has space"))
+            .map(|name| admit(&mut game, name, None, 1000).expect("the room has space"))
             .collect();
         (game, keys)
     }
@@ -720,7 +709,7 @@ mod tests {
             game.bound(key, low, high, 1001).unwrap();
         }
         let round = game.round().unwrap();
-        let stats = round.stats(&game.players, Pass::First).unwrap();
+        let stats = round.stats(&game.lobby.players, Pass::First).unwrap();
         assert_eq!(stats.n, 4);
         assert_eq!(stats.median_low, 25.0, "lows 10 20 30 100");
         assert_eq!(stats.median_high, 75.0, "highs 40 60 90 120");
@@ -758,7 +747,7 @@ mod tests {
         let stats = game
             .round()
             .unwrap()
-            .stats(&game.players, Pass::First)
+            .stats(&game.lobby.players, Pass::First)
             .unwrap();
         assert_eq!(stats.hits, Some(3));
     }
@@ -809,8 +798,11 @@ mod tests {
         game.reveal().unwrap();
         let round = game.round().unwrap();
         assert!(round.after.is_empty(), "the room only went round once");
-        assert!(round.shift(&game.players).is_none());
-        assert_eq!(round.standing_stats(&game.players).unwrap().hits, Some(1));
+        assert!(round.shift(&game.lobby.players).is_none());
+        assert_eq!(
+            round.standing_stats(&game.lobby.players).unwrap().hits,
+            Some(1)
+        );
     }
 
     /// The host may know the answer when they ask, look it up while the
@@ -893,7 +885,7 @@ mod tests {
         game.reveal().unwrap();
 
         let round = game.round().unwrap();
-        let shift = round.shift(&game.players).expect("two passes");
+        let shift = round.shift(&game.lobby.players).expect("two passes");
         assert_eq!(shift.n, 4);
         assert_eq!(shift.moved, 3, "Di did not touch theirs");
         assert_eq!(shift.narrower, 1, "only Ada's range got smaller");
@@ -933,7 +925,7 @@ mod tests {
         }
         game.reveal().unwrap();
 
-        let shift = game.round().unwrap().shift(&game.players).unwrap();
+        let shift = game.round().unwrap().shift(&game.lobby.players).unwrap();
         let pulled = shift.pull_name();
         assert_eq!(
             pulled,
@@ -957,7 +949,7 @@ mod tests {
         assert!(
             game.round()
                 .unwrap()
-                .shift(&game.players)
+                .shift(&game.lobby.players)
                 .unwrap()
                 .pulled
                 .is_none()
@@ -972,12 +964,12 @@ mod tests {
         game.move_to(Stage::Second).unwrap();
         game.bound(&keys[0], 40.0, 60.0, 1002).unwrap();
         let round = game.round().unwrap();
-        let shift = round.shift(&game.players).unwrap();
+        let shift = round.shift(&game.lobby.players).unwrap();
         assert_eq!(shift.towards, None);
         assert_eq!(shift.hits_before, None);
 
         game.set_answer(Some(50.0)).unwrap();
-        let shift = game.round().unwrap().shift(&game.players).unwrap();
+        let shift = game.round().unwrap().shift(&game.lobby.players).unwrap();
         assert_eq!(shift.towards, Some(1));
         assert_eq!((shift.hits_before, shift.hits_after), (Some(0), Some(1)));
     }
@@ -990,28 +982,54 @@ mod tests {
         game.move_to(Stage::Second).unwrap();
         game.bound(&keys[1], 5.0, 6.0, 1002).unwrap();
         let round = game.round().unwrap();
-        assert_eq!(round.changes(&game.players).len(), 0, "nobody did both");
-        assert!(round.shift(&game.players).is_none());
         assert_eq!(
-            round.standing_stats(&game.players).unwrap().n,
+            round.changes(&game.lobby.players).len(),
+            0,
+            "nobody did both"
+        );
+        assert!(round.shift(&game.lobby.players).is_none());
+        assert_eq!(
+            round.standing_stats(&game.lobby.players).unwrap().n,
             2,
             "but both of them still count towards where the room stands"
         );
     }
 
     #[test]
-    fn a_name_already_in_the_room_walks_back_in_as_itself() {
+    fn a_name_is_refused_while_its_phone_is_here_and_given_back_after() {
         let (mut game, keys) = room();
-        assert_eq!(game.join("  Ada  ", 2000).unwrap(), keys[0]);
-        assert_eq!(game.players.len(), 4);
-        assert_ne!(game.join("ada", 2000).unwrap(), keys[0], "another name");
-        assert_eq!(game.players.len(), 5);
+        assert!(
+            admit(&mut game, "  ada  ", None, 2000).is_err(),
+            "Ada joined a second ago, so this is somebody else"
+        );
+        assert_eq!(game.lobby.len(), 4);
+        let gone = 1000 + PRESENT_MS;
+        assert_eq!(admit(&mut game, "Ada", None, gone).unwrap(), keys[0]);
+        assert_eq!(
+            admit(&mut game, "Whoever", Some(&keys[1]), gone).unwrap(),
+            keys[1],
+            "a kept key gets back in"
+        );
+        assert_eq!(game.lobby.len(), 4);
+    }
+
+    #[test]
+    fn somebody_taken_out_takes_their_ranges_with_them() {
+        let (mut game, keys) = room();
+        game.ask("One", "", Some(5.0), 1000).unwrap();
+        game.bound(&keys[0], 1.0, 9.0, 1001).unwrap();
+        game.bound(&keys[1], 1.0, 2.0, 1001).unwrap();
+        assert_eq!(rooms::lobby::remove(&mut game, "Ada"), Ok(keys[0].clone()));
+        let round = game.round().unwrap();
+        assert!(!round.before.contains_key(&keys[0]));
+        assert_eq!(round.standing_stats(&game.lobby.players).unwrap().n, 1);
+        assert!(game.bound(&keys[0], 1.0, 2.0, 1002).is_err());
     }
 
     #[test]
     fn a_nameless_player_is_turned_away() {
         let mut game = Game::new(1000);
-        assert!(game.join("   ", 1000).is_err());
+        assert!(admit(&mut game, "   ", None, 1000).is_err());
     }
 
     #[test]
@@ -1090,8 +1108,8 @@ mod tests {
         let (mut game, _) = room();
         game.ask("One", "", None, 1000).unwrap();
         let round = game.round().unwrap();
-        assert!(round.stats(&game.players, Pass::First).is_none());
-        assert!(round.standing_stats(&game.players).is_none());
+        assert!(round.stats(&game.lobby.players, Pass::First).is_none());
+        assert!(round.standing_stats(&game.lobby.players).is_none());
     }
 
     #[test]
@@ -1105,7 +1123,18 @@ mod tests {
     #[test]
     fn a_name_is_cut_to_length_in_characters() {
         let mut game = Game::new(1000);
-        let key = game.join(&"ä".repeat(MAX_NAME + 10), 1000).unwrap();
+        let key = admit(&mut game, &"ä".repeat(MAX_NAME + 10), None, 1000).unwrap();
         assert_eq!(game.player(&key).unwrap().name.chars().count(), MAX_NAME);
+    }
+
+    #[test]
+    fn a_room_saved_before_the_lobby_loads() {
+        let saved = r#"{"join":"J","confidence":80,"players":[{"key":"K","name":"Ada"}],
+            "rounds":[],"last_seen":5}"#;
+        let game: Game = serde_json::from_str(saved).unwrap();
+        assert_eq!(game.lobby.join, "J");
+        assert_eq!(game.player("K").unwrap().name, "Ada");
+        assert!(!game.lobby.wall.is_empty(), "and it is given a wall");
+        assert_eq!(game.confidence, 80);
     }
 }

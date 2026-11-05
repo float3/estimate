@@ -1,17 +1,22 @@
 // The estimation game, in a browser.
 //
-// One page with three screens: the one that opens a room, the host's, and
-// the player's, which is almost always a phone.
+// One page with four screens: the one that opens a room, the host's, the
+// player's, which is almost always a phone, and the wall, which is
+// projected for the whole room.
 
 import {
   api,
   byId,
+  connectedCount,
+  el,
   esc,
   fail,
   failed,
   hide,
   html,
   joining,
+  joinLink,
+  keepAwake,
   landed,
   list,
   num,
@@ -19,13 +24,19 @@ import {
   onSubmit,
   opening,
   plural,
+  type Present,
+  roster,
   route,
   sentState,
   setValue,
+  shareLink,
   show,
-  showJoin,
+  showConnection,
+  subscribe,
   text,
   value,
+  wall,
+  wallButton,
   watch,
 } from "./rooms";
 
@@ -130,6 +141,10 @@ interface Past {
 
 interface HostView {
   join: string;
+  /** The wall's key, for "Open the wall view". */
+  wall: string;
+  /** Who is in, and whose phone is connected. */
+  people: Present[];
   confidence: number;
   players: Who[];
   round: Asked | null;
@@ -321,15 +336,14 @@ function host(key: string): void {
     fail("");
   });
 
+  const remove = (name: string) =>
+    api("POST", at("/remove"), { name }).then(() => fail(""));
+
   function drawRoom(view: HostView): void {
-    showJoin(view.join);
-    byId("room").classList.toggle("tight", view.players.length > 0);
-    html(
-      "who",
-      view.players.length === 0
-        ? "Nobody has joined yet."
-        : `<span class="dot"></span> ${esc(plural(view.players.length, "person", "people"))} in the room`,
-    );
+    shareLink("join-share", joinLink(view.join));
+    text("who", connectedCount(view.people));
+    roster("people", view.people, { remove });
+    wallButton("wall-button", view.wall);
 
     html(
       "levels",
@@ -538,7 +552,8 @@ function host(key: string): void {
 
   // Fetches the room once, then keeps it up to date from its event
   // stream; `watch` adds the "/events" itself.
-  watch<HostView>(at(""), draw);
+  showConnection(watch<HostView>(at(""), draw));
+  void keepAwake();
 }
 
 
@@ -744,12 +759,212 @@ function player(key: string): void {
   }
 
   // Fetches the room once, then keeps it up to date from its event
-  // stream; `watch` adds the "/events" itself.
-  watch<PlayerView>(at(""), draw);
+  // stream. The stream closes when the host takes this player out, and
+  // then the link is gone: the question goes too, so nobody types a
+  // range into a screen that can no longer send one.
+  showConnection(
+    subscribe<PlayerView>(at(""), at("/events"), draw, () => {
+      hide("screen-player", true);
+      fail(
+        "You are not in this room. The host may have taken you out, or the room has finished. Open the join link again to rejoin.",
+      );
+    }),
+  );
+  void keepAwake();
+}
+
+// ------------------------------------------------------------------- wall
+
+/** One range on the wall. Nobody's name is sent with it. */
+interface WallRange {
+  low: number;
+  high: number;
+  hit: boolean | null;
+}
+
+interface WallReveal {
+  answer: number | null;
+  ranges: WallRange[];
+  /** The median lower and upper bound. */
+  middle: [number, number] | null;
+  hits: number | null;
+  twice: {
+    n: number;
+    moved: number;
+    hits_before: number | null;
+    hits_after: number | null;
+  } | null;
+}
+
+/** What the server puts on the wall: see `view::wall`. Before the
+ *  reveal there is no answer and no range in it to show. */
+interface WallGame {
+  confidence: number;
+  round: {
+    question: string;
+    unit: string;
+    stage: Stage;
+    sent: number;
+    of: number;
+    reveal: WallReveal | null;
+  } | null;
+  top: { name: string; hits: number; scored: number }[];
+}
+
+/** Where a value sits across the chart, from 0 to 1. A log scale when
+ *  everything is above zero and the values span two orders of magnitude
+ *  or more, so one guess of a billion does not squash the rest into a
+ *  line. */
+function scale(values: number[]): { at: (v: number) => number; log: boolean; lo: number; hi: number } {
+  const lo = Math.min(...values);
+  const hi = Math.max(...values);
+  const log = lo > 0 && hi / lo >= 100;
+  const f = log ? Math.log10 : (v: number) => v;
+  const a = f(lo);
+  const b = f(hi);
+  const pad = b === a ? 1 : (b - a) * 0.04;
+  return { at: (v: number) => (f(v) - (a - pad)) / (b - a + 2 * pad), log, lo, hi };
+}
+
+/** The ranges as bars against the answer, lowest first, unnamed. */
+function rangeChart(reveal: WallReveal, unitName: string): SVGSVGElement | null {
+  const ranges = reveal.ranges;
+  if (ranges.length === 0) return null;
+  const values = ranges.flatMap((r) => [r.low, r.high]);
+  if (reveal.answer !== null) values.push(reveal.answer);
+  const { at, log, lo, hi } = scale(values);
+  const width = 1000;
+  const row = Math.max(4, Math.min(28, 420 / ranges.length));
+  const bar = Math.max(2, row * 0.6);
+  const top = 8;
+  const base = top + row * ranges.length + 6;
+  const height = base + 40;
+  const x = (v: number) => (at(v) * width).toFixed(1);
+  const parts: string[] = [];
+  ranges.forEach((r, i) => {
+    const y = top + i * row + (row - bar) / 2;
+    const x1 = at(r.low) * width;
+    const x2 = Math.max(at(r.high) * width, x1 + 3);
+    const kind = r.hit === null ? "open" : r.hit ? "hit" : "miss";
+    parts.push(
+      `<rect class="wall-bar ${kind}" x="${x1.toFixed(1)}" y="${y.toFixed(1)}" width="${(x2 - x1).toFixed(1)}" height="${bar.toFixed(1)}" rx="${Math.min(4, bar / 2).toFixed(1)}"/>`,
+    );
+  });
+  parts.push(`<line class="wall-axis" x1="0" x2="${width}" y1="${base}" y2="${base}"/>`);
+  const tick = (v: number, anchor: string) =>
+    `<text class="wall-tick" x="${x(v)}" y="${base + 32}" text-anchor="${anchor}">${esc(num(v))}</text>`;
+  parts.push(tick(lo, "start"), tick(hi, "end"));
+  if (log) {
+    parts.push(
+      `<text class="wall-tick" x="${width / 2}" y="${base + 32}" text-anchor="middle">log scale</text>`,
+    );
+  }
+  if (reveal.answer !== null) {
+    const ax = x(reveal.answer);
+    parts.push(`<line class="wall-answer" x1="${ax}" x2="${ax}" y1="0" y2="${base}"/>`);
+  }
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  svg.setAttribute("class", "wall-chart");
+  svg.setAttribute("role", "img");
+  svg.setAttribute(
+    "aria-label",
+    `${plural(ranges.length, "range", "ranges")}${
+      reveal.answer === null ? "" : ` against the answer, ${num(reveal.answer)} ${unitName}`
+    }${log ? ", on a log scale" : ""}`,
+  );
+  svg.innerHTML = parts.join("");
+  return svg;
+}
+
+/** The game's part of the wall. Large, for the back of the room. Names
+ *  appear only in the top of the board, never beside a range. */
+function drawWall(game: WallGame, slot: HTMLElement): void {
+  const shape = JSON.stringify(game);
+  if (slot.dataset.shape === shape) return;
+  slot.dataset.shape = shape;
+  const round = game.round;
+  if (!round) {
+    slot.replaceChildren(
+      el("p", { className: "eyebrow" }, `${game.confidence}% sure`),
+      el("p", { className: "wall-question" }, "Waiting for the first question"),
+    );
+    return;
+  }
+  const children: Node[] = [
+    el(
+      "p",
+      { className: "eyebrow" },
+      round.stage === "revealed"
+        ? `${STAGES[round.stage]} · ranges at ${game.confidence}%`
+        : `${STAGES[round.stage]} · give a range you are ${game.confidence}% sure of`,
+    ),
+    el("p", { className: "wall-question" }, round.question),
+  ];
+  const reveal = round.reveal;
+  if (round.unit && !reveal) children.push(el("p", { className: "wall-unit" }, `Answer in ${round.unit}`));
+  if (!reveal) {
+    children.push(
+      el("p", { className: "wall-count-big" }, `${round.sent} of ${round.of}`),
+      el(
+        "p",
+        { className: "wall-unit" },
+        round.stage === "discussion"
+          ? "sent a first range. Talk it over."
+          : round.stage === "second"
+            ? "have sent a second range"
+            : "have sent a range",
+      ),
+    );
+    slot.replaceChildren(...children);
+    return;
+  }
+  const withIt = (v: number) => (round.unit ? `${num(v)} ${round.unit}` : num(v));
+  children.push(
+    el(
+      "p",
+      { className: "wall-answer-big" },
+      el("span", { className: "eyebrow" }, "The answer "),
+      reveal.answer === null ? "not entered yet" : withIt(reveal.answer),
+    ),
+  );
+  // The bars first, so they are on screen without scrolling; the
+  // counts under them.
+  const chart = rangeChart(reveal, round.unit);
+  if (chart) children.push(chart);
+  const said: string[] = [];
+  const n = reveal.ranges.length;
+  if (reveal.hits !== null && n > 0) {
+    const expected = Math.round((n * game.confidence) / 100);
+    said.push(
+      `${reveal.hits} of ${plural(n, "range", "ranges")} contained it; at ${game.confidence}%, about ${expected} should.`,
+    );
+  }
+  const twice = reveal.twice;
+  if (twice && twice.hits_before !== null && twice.hits_after !== null) {
+    said.push(
+      `Of the ${twice.n} who answered twice, ${twice.hits_before} → ${twice.hits_after} contained it, and ${twice.moved} changed their range.`,
+    );
+  } else if (reveal.middle) {
+    said.push(`The middle of the room: ${num(reveal.middle[0])} – ${withIt(reveal.middle[1])}.`);
+  }
+  if (said.length > 0) children.push(el("p", { className: "wall-line" }, said.join(" ")));
+  if (game.top.length > 0) {
+    children.push(
+      el(
+        "ol",
+        { className: "wall-top" },
+        el("li", { className: "eyebrow" }, "Top of the board"),
+        ...game.top.map((t) => el("li", {}, el("b", {}, t.name), ` ${t.hits} of ${t.scored}`)),
+      ),
+    );
+  }
+  slot.replaceChildren(...children);
 }
 
 const where = route();
 if (where.kind === "host") host(where.key);
 else if (where.kind === "join") joining("estimate", where.key);
 else if (where.kind === "player") player(where.key);
+else if (where.kind === "wall") wall<WallGame>(where.key, drawWall);
 else opening();

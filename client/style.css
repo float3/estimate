@@ -1,15 +1,5 @@
 /* The rules specific to the estimation game. The rest is rooms.css. */
 
-/* Once somebody has joined, the QR code is no longer the thing to look
- * at, so it shrinks and leaves the screen to the numbers. */
-#room.tight .qr svg {
-  width: 112px;
-}
-
-#room.tight .link {
-  font-size: 0.85rem;
-}
-
 /* The two bounds stay side by side even on the narrowest phone. They are
  * one answer, and splitting them over two rows reads worse than setting
  * them small. */
@@ -66,4 +56,99 @@ h3 {
   flex: none;
   width: auto;
   margin: 0;
+}
+
+/* The wall: the question and the counts before the reveal, and the
+ * ranges as unnamed bars after it, large enough for the back of a room. */
+.wall-game .eyebrow {
+  font-size: clamp(0.8rem, 1.3vw, 1.1rem);
+}
+
+.wall-question {
+  font: 400 clamp(1.6rem, 3.4vw, 3rem) / 1.2 Georgia, serif;
+  margin: 4px 0 8px;
+}
+
+.wall-unit,
+.wall-line {
+  margin: 4px 0;
+  color: var(--body);
+}
+
+.wall-line {
+  font-size: 0.8em;
+}
+
+.wall-count-big {
+  font: 400 clamp(2.4rem, 7vw, 5.5rem) / 1.1 Georgia, serif;
+  font-variant-numeric: tabular-nums;
+  margin: 12px 0 0;
+}
+
+.wall-answer-big {
+  font: 400 clamp(2rem, 4.6vw, 4rem) / 1.1 Georgia, serif;
+  font-variant-numeric: tabular-nums;
+  margin: 8px 0 0;
+}
+
+.wall-answer-big .eyebrow {
+  display: block;
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+.wall-chart {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 32vh;
+  margin-top: 12px;
+}
+
+.wall-bar.hit {
+  fill: var(--mark);
+}
+
+.wall-bar.miss {
+  fill: var(--bad);
+  opacity: 0.75;
+}
+
+.wall-bar.open {
+  fill: var(--body);
+}
+
+.wall-axis {
+  stroke: var(--border);
+  stroke-width: 2;
+}
+
+.wall-answer {
+  stroke: var(--ink);
+  stroke-width: 4;
+}
+
+.wall-tick {
+  fill: var(--body);
+  font-size: 26px;
+}
+
+/* The top three, on one line under the bars. */
+.wall-top {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 24px;
+  counter-reset: place;
+}
+
+.wall-top li:not(.eyebrow) {
+  counter-increment: place;
+}
+
+.wall-top li:not(.eyebrow)::before {
+  content: counter(place) ". ";
+  color: var(--body);
 }
