@@ -181,3 +181,34 @@ td.cost small {
   font-weight: 700;
   margin: 4px 0;
 }
+
+/* A number field with its ± button, for the iPhone's keypad, which has
+ * no minus key. */
+.signed {
+  display: flex;
+  gap: 6px;
+  align-items: stretch;
+  flex: 1;
+  min-width: 0;
+}
+
+.signed input {
+  flex: 1;
+  min-width: 0;
+}
+
+.sign {
+  flex: none;
+  width: 44px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--tint);
+  font-size: 1.25rem;
+  cursor: pointer;
+}
+
+.sign[aria-pressed="true"] {
+  background: var(--ink);
+  color: var(--on-ink);
+  border-color: var(--ink);
+}

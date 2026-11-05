@@ -69,7 +69,7 @@
         </div>
         <div>
           <label for="answer">The answer, if you have it</label>
-          <input id="answer" type="number" step="any" inputmode="decimal">
+          <div class="signed"><input id="answer" type="number" step="any" inputmode="decimal"><button type="button" class="sign" aria-label="Make it negative" aria-pressed="false">±</button></div>
         </div>
       </div>
       <p class="note">The answer stays on this screen until you reveal it. You
@@ -89,7 +89,7 @@
       </div>
       <form id="answer-form">
         <label for="true-answer" id="answer-label">The answer</label>
-        <input id="true-answer" type="number" step="any" inputmode="decimal">
+        <div class="signed"><input id="true-answer" type="number" step="any" inputmode="decimal"><button type="button" class="sign" aria-label="Make it negative" aria-pressed="false">±</button></div>
         <div class="actions"><button class="button" type="submit">Save the answer</button></div>
       </form>
       <div id="numbers"></div>
@@ -125,11 +125,11 @@
         <div class="bounds">
           <div>
             <label for="low">At least</label>
-            <input id="low" type="number" step="any" inputmode="decimal" required>
+            <div class="signed"><input id="low" type="number" step="any" inputmode="decimal" required><button type="button" class="sign" aria-label="Make it negative" aria-pressed="false">±</button></div>
           </div>
           <div>
             <label for="high">At most</label>
-            <input id="high" type="number" step="any" inputmode="decimal" required>
+            <div class="signed"><input id="high" type="number" step="any" inputmode="decimal" required><button type="button" class="sign" aria-label="Make it negative" aria-pressed="false">±</button></div>
           </div>
         </div>
         <p class="note" id="preview"></p>
