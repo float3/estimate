@@ -347,6 +347,7 @@ function host(key: string): void {
     byId<HTMLInputElement>("question").value = "";
     byId<HTMLInputElement>("unit").value = "";
     byId<HTMLInputElement>("answer").value = "";
+    unsign(byId("ask-form"));
     fail("");
   });
 
@@ -569,9 +570,9 @@ function host(key: string): void {
               }.`
         }</p>
         <form class="past-answer" data-index="${past.index}">
-          <input type="number" step="any" inputmode="decimal"
+          <span class="signed"><input type="number" step="any" inputmode="decimal"
             aria-label="The answer" placeholder="The answer"
-            value="${past.answer === null ? "" : past.answer}">
+            value="${past.answer === null ? "" : past.answer}"><button type="button" class="sign" aria-label="Make it negative" aria-pressed="false">±</button></span>
           <button class="button" type="submit">${past.answer === null ? "Save" : "Change"}</button>
         </form>
       </div>`,
@@ -619,6 +620,7 @@ function host(key: string): void {
       if (answerFor !== round.asked) {
         answerFor = round.asked;
         setValue("true-answer", round.answer);
+        unsign(byId("answer-form"));
       }
       text(
         "answer-label",
@@ -823,6 +825,7 @@ function player(key: string): void {
       const mine = (round.stage === "second" ? view.mine_after : view.mine_before) ?? from;
       setValue("low", mine ? mine.low : null);
       setValue("high", mine ? mine.high : null);
+      unsign(byId("bounds-form"));
     }
 
     drawStatus();
@@ -1046,6 +1049,66 @@ function drawWall(game: WallGame, slot: HTMLElement): void {
   }
   slot.replaceChildren(...children);
 }
+
+// ------------------------------------------------------------ the sign
+
+// The decimal keypad on an iPhone has no minus key, so each number field
+// has a ± button beside it. It flips the sign of what is in the field.
+// On an empty field there is nothing to flip yet: the button stays
+// pressed, and the first number typed is made negative.
+function signOf(button: HTMLButtonElement): HTMLInputElement | null {
+  const field = button.previousElementSibling;
+  return field instanceof HTMLInputElement ? field : null;
+}
+
+/** Lets go of every pressed ± in `root`, for fields the page fills or
+ *  empties itself. */
+function unsign(root: ParentNode): void {
+  root.querySelectorAll<HTMLButtonElement>("button.sign").forEach((button) => arm(button, false));
+}
+
+function arm(button: HTMLButtonElement, armed: boolean): void {
+  button.setAttribute("aria-pressed", String(armed));
+  const field = signOf(button);
+  if (!field) return;
+  if (armed) {
+    field.dataset.placeholder ??= field.placeholder;
+    field.placeholder = "−";
+  } else if (field.dataset.placeholder !== undefined) {
+    field.placeholder = field.dataset.placeholder;
+    delete field.dataset.placeholder;
+  }
+}
+
+document.addEventListener("click", (event) => {
+  const button = (event.target as Element | null)?.closest?.("button.sign");
+  if (!(button instanceof HTMLButtonElement)) return;
+  const field = signOf(button);
+  if (!field) return;
+  const given = field.valueAsNumber;
+  if (isFinite(given) && given !== 0) {
+    field.value = String(-given);
+    arm(button, false);
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+  } else {
+    arm(button, button.getAttribute("aria-pressed") !== "true");
+  }
+  field.focus();
+});
+
+document.addEventListener("input", (event) => {
+  const field = event.target;
+  if (!(field instanceof HTMLInputElement)) return;
+  const button = field.nextElementSibling;
+  if (!(button instanceof HTMLButtonElement) || !button.classList.contains("sign")) return;
+  if (button.getAttribute("aria-pressed") !== "true") return;
+  const given = field.valueAsNumber;
+  if (isFinite(given) && given > 0) {
+    arm(button, false);
+    field.value = String(-given);
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+});
 
 const where = route();
 if (where.kind === "host") host(where.key);
