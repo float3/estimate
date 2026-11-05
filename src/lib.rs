@@ -66,6 +66,12 @@ struct Asked {
     answer: Option<f64>,
 }
 
+/// A pasted list of questions: see `game::parse_queue`.
+#[derive(Deserialize)]
+struct Lined {
+    text: String,
+}
+
 #[derive(Deserialize)]
 struct Staged {
     stage: Stage,
@@ -123,6 +129,25 @@ async fn ask(
         game.ask(&asked.question, &asked.unit, asked.answer, now)
     })
     .await
+}
+
+/// Replaces the questions lined up with the pasted list. A line that
+/// cannot be read is refused by its number, and the list is left as it
+/// was.
+async fn set_queue(
+    State(rooms): State<Shared>,
+    Path(key): Path<String>,
+    Json(lined): Json<Lined>,
+) -> Response {
+    match game::parse_queue(&lined.text) {
+        Ok(queue) => act(&rooms, &key, |game, _| game.set_queue(queue)).await,
+        Err(message) => http::refused(&message),
+    }
+}
+
+/// Asks the first question lined up.
+async fn ask_next(State(rooms): State<Shared>, Path(key): Path<String>) -> Response {
+    act(&rooms, &key, |game, now| game.ask_next(now)).await
 }
 
 /// Moves the question on: to the discussion, to the second ranges, or
@@ -204,6 +229,8 @@ pub fn router_under(rooms: Shared, base: &str) -> Router {
         .route("/api/h/{key}", get(host_state))
         .route("/api/h/{key}/events", get(host_events))
         .route("/api/h/{key}/ask", post(ask))
+        .route("/api/h/{key}/queue", put(set_queue))
+        .route("/api/h/{key}/next", post(ask_next))
         .route("/api/h/{key}/stage", put(set_stage))
         .route("/api/h/{key}/answer", put(set_answer))
         .route("/api/h/{key}/reveal", post(reveal))
@@ -462,6 +489,43 @@ mod tests {
             view["round"]["confidence"], 90,
             "the revealed one keeps its level"
         );
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn a_pasted_list_is_asked_one_at_a_time() {
+        let (app, path) = app("queue");
+        let (host, _) = ready(&app).await;
+        let uri = format!("/api/h/{host}/queue");
+        let (status, body) = call(
+            &app,
+            "PUT",
+            &uri,
+            Some(json!({"text": "One | 1\nTwo | lots"})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert!(
+            body["error"].as_str().unwrap().starts_with("Line 2"),
+            "{body}"
+        );
+
+        let view = ok(
+            &app,
+            "PUT",
+            &uri,
+            Some(json!({"text": "One | 1 | m\nTwo | 2"})),
+        )
+        .await["view"]
+            .clone();
+        assert_eq!(view["queue"][1]["question"], "Two");
+        let view = ok(&app, "POST", &format!("/api/h/{host}/next"), None).await["view"].clone();
+        assert_eq!(view["round"]["question"], "One");
+        assert_eq!(view["round"]["unit"], "m");
+        assert_eq!(view["history"][0]["question"], "How many lamps?");
+        assert_eq!(view["queue"].as_array().map(Vec::len), Some(1));
+
         let _ = std::fs::remove_file(&path);
     }
 

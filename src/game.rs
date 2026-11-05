@@ -124,6 +124,10 @@ pub struct Game {
     pub confidence: u8,
     /// Oldest first; the last one is the question the room is on.
     pub rounds: Vec<Round>,
+    /// Questions the host has lined up, asked one at a time with "Ask
+    /// next". Only the host is sent them, answers included.
+    #[serde(default)]
+    pub queue: Vec<Queued>,
     pub last_seen: u64,
 }
 
@@ -204,6 +208,7 @@ impl Game {
             lobby: Lobby::new(),
             confidence: CONFIDENCE,
             rounds: Vec::new(),
+            queue: Vec::new(),
             last_seen: now,
         }
     }
@@ -269,6 +274,28 @@ impl Game {
             before: HashMap::new(),
             after: HashMap::new(),
         });
+        Ok(())
+    }
+
+    /// Replaces the questions lined up. See `parse_queue`.
+    pub fn set_queue(&mut self, queue: Vec<Queued>) -> Result<(), &'static str> {
+        if queue.len() > MAX_ROUNDS {
+            return Err("That is more questions than one room holds.");
+        }
+        self.queue = queue;
+        Ok(())
+    }
+
+    /// Asks the first question lined up, as `ask` would, and takes it off
+    /// the list.
+    pub fn ask_next(&mut self, now: u64) -> Result<(), &'static str> {
+        let next = self
+            .queue
+            .first()
+            .cloned()
+            .ok_or("No questions are lined up.")?;
+        self.ask(&next.question, &next.unit, next.answer, now)?;
+        self.queue.remove(0);
         Ok(())
     }
 
@@ -347,6 +374,69 @@ impl Game {
         };
         Ok(())
     }
+}
+
+/// A question waiting its turn.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Queued {
+    pub question: String,
+    pub answer: Option<f64>,
+    pub unit: String,
+}
+
+/// Reads a pasted list of questions, one per line, as
+/// `question | answer | unit`. The answer and the unit may be left out
+/// or left empty. Blank lines and lines starting with `#` are skipped.
+/// The answer may have commas, spaces or underscores between thousands
+/// and a typographic minus; its decimal separator is a point.
+///
+/// An error names the line, so the host can find it in what they pasted.
+pub fn parse_queue(text: &str) -> Result<Vec<Queued>, String> {
+    let mut queue = Vec::new();
+    for (at, line) in text.lines().enumerate() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let at = at + 1;
+        let fields: Vec<&str> = line.split('|').map(str::trim).collect();
+        if fields.len() > 3 {
+            return Err(format!(
+                "Line {at} has more than three parts. Write it as: question | answer | unit."
+            ));
+        }
+        let question = tidy(fields[0], MAX_QUESTION);
+        if question.is_empty() {
+            return Err(format!("Line {at} has no question before its first |."));
+        }
+        let answer = match fields.get(1).copied().unwrap_or("") {
+            "" => None,
+            given => {
+                let plain: String = given
+                    .chars()
+                    .filter(|c| !matches!(c, ',' | '_' | ' ' | '\u{2009}' | '\u{202f}' | '\u{a0}'))
+                    .map(|c| if c == '\u{2212}' { '-' } else { c })
+                    .collect();
+                match plain.parse::<f64>() {
+                    Ok(answer) if answer.is_finite() => Some(answer),
+                    _ => {
+                        return Err(format!(
+                            "Line {at}: “{given}” is not a number. Write the answer with a decimal point, as 1500000 or 1,500,000.5."
+                        ));
+                    }
+                }
+            }
+        };
+        queue.push(Queued {
+            question,
+            answer,
+            unit: tidy(fields.get(2).copied().unwrap_or(""), MAX_UNIT),
+        });
+        if queue.len() > MAX_ROUNDS {
+            return Err(format!("That is more than {MAX_ROUNDS} questions."));
+        }
+    }
+    Ok(queue)
 }
 
 /// A number and the name of the player it came from.
@@ -1237,6 +1327,67 @@ mod tests {
         assert!(!round.before.contains_key(&keys[0]));
         assert_eq!(round.standing_stats(&game.lobby.players).unwrap().n, 1);
         assert!(game.bound(&keys[0], 1.0, 2.0, 1002).is_err());
+    }
+
+    #[test]
+    fn a_pasted_list_becomes_questions_with_answers_and_units() {
+        let queue = parse_queue(
+            "How tall is the Olympiaturm? | 291 | m\n\
+             \n\
+             # a comment\n\
+             How many people live in Munich? | 1,510,000\n\
+             Coldest day on record? | −31.6 | °C\n\
+             Nobody knows this one\n\
+             No answer yet |  | km\n",
+        )
+        .unwrap();
+        let got: Vec<(&str, Option<f64>, &str)> = queue
+            .iter()
+            .map(|q| (q.question.as_str(), q.answer, q.unit.as_str()))
+            .collect();
+        assert_eq!(
+            got,
+            [
+                ("How tall is the Olympiaturm?", Some(291.0), "m"),
+                ("How many people live in Munich?", Some(1_510_000.0), ""),
+                ("Coldest day on record?", Some(-31.6), "°C"),
+                ("Nobody knows this one", None, ""),
+                ("No answer yet", None, "km"),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_line_that_cannot_be_read_is_named() {
+        let error = parse_queue("Fine | 1\nHow far? | about ten | km").unwrap_err();
+        assert!(error.starts_with("Line 2:"), "{error}");
+        assert!(parse_queue(" | 5").unwrap_err().starts_with("Line 1"));
+        assert!(parse_queue("a | 1 | m | extra").is_err());
+        assert_eq!(parse_queue("\n\n").unwrap(), []);
+    }
+
+    #[test]
+    fn asking_next_takes_the_first_question_off_the_list() {
+        let (mut game, keys) = room();
+        assert!(game.ask_next(1000).is_err(), "nothing is lined up");
+        game.set_queue(parse_queue("One | 1 | m\nTwo | 2").unwrap())
+            .unwrap();
+        game.ask_next(1000).unwrap();
+        game.bound(&keys[0], 0.0, 5.0, 1001).unwrap();
+        let round = game.round().unwrap();
+        assert_eq!(
+            (round.question.as_str(), round.answer, round.unit.as_str()),
+            ("One", Some(1.0), "m")
+        );
+        assert_eq!(game.queue.len(), 1);
+        game.ask_next(2000).unwrap();
+        assert_eq!(
+            game.rounds[0].stage,
+            Stage::Revealed,
+            "like asking, it reveals the open one"
+        );
+        assert_eq!(game.round().unwrap().question, "Two");
+        assert!(game.queue.is_empty());
     }
 
     #[test]
