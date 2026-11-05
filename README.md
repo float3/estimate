@@ -23,9 +23,17 @@ built on [rooms](https://github.com/float3/rooms).
 ## what it reports
 
 a range is a claim about how much you know: at ninety per cent, nine in ten
-of your ranges should contain the answer. the scoreboard counts how often
-somebody was right and how often they were narrower than the room, so that
-a hit rate cannot be bought with very wide ranges.
+of your ranges should contain the answer. the scoreboard ranks by the
+interval score (Gneiting and Raftery), lowest first: the width of each
+range plus, for a miss, 2 ÷ (1 − the level) times the distance it missed
+by, averaged over the questions with an answer. a range wide enough to hold
+everything loses on width, and one too narrow to hold the answer loses on
+the miss, so a hit rate cannot be bought with very wide ranges. distances
+are in powers of ten when every number in a question is above zero, and in
+the room's median first range otherwise. the board shows the score as
+width + misses, and the hit count beside how many should have hit; each
+player is told whether their ranges were too narrow, too wide, or about
+right.
 
 each question keeps the level it was asked at, and its numbers are judged
 against that one. the host can change the level between questions, not

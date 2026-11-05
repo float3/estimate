@@ -649,6 +649,65 @@ impl Round {
     }
 }
 
+/// Which way somebody's hit count is off from what their level says it
+/// should be.
+#[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum Calibration {
+    /// Fewer ranges contained the answer than the level says should:
+    /// overconfident.
+    Narrow,
+    /// More did: underconfident.
+    Wide,
+    /// About as many as should, over enough questions to say so.
+    Right,
+}
+
+/// Whether `hits` is about what `levels` (one per scored question, as a
+/// fraction) say to expect. A count may be off by one question, or by
+/// one standard deviation of the count if that is more, and still be
+/// about right: with ten questions at 90%, 8 to 10 is. Fewer than three
+/// questions are never called right, only clearly off.
+fn calibration(hits: usize, levels: &[f64]) -> Option<Calibration> {
+    let expected: f64 = levels.iter().sum();
+    let spread = levels.iter().map(|p| p * (1.0 - p)).sum::<f64>().sqrt();
+    let off = hits as f64 - expected;
+    if off.abs() <= spread.max(1.0) {
+        (levels.len() >= 3).then_some(Calibration::Right)
+    } else if off < 0.0 {
+        Some(Calibration::Narrow)
+    } else {
+        Some(Calibration::Wide)
+    }
+}
+
+/// One range's interval score (Gneiting and Raftery, 2007), in its two
+/// parts: the width of the range, and a penalty for missing of `2 / α`
+/// times the distance it missed by, where `α = 1 − level`. The sum is
+/// lowest, on average, for somebody whose ranges hold the answer as often
+/// as the level says and are no wider than that needs, so neither a very
+/// wide range nor a very narrow one pays.
+///
+/// `log` measures in powers of ten; otherwise both parts are divided by
+/// `scale`. See `Round::cost_log` and `Round::cost_scale`.
+pub fn interval_cost(bound: Bound, answer: f64, level: u8, log: bool, scale: f64) -> (f64, f64) {
+    // 2 / α, as 200 / (100 − level) so that 90% is exactly 20.
+    let penalty = 200.0 / f64::from(100 - level.min(99));
+    let (low, high, x) = if log {
+        (bound.low.log10(), bound.high.log10(), answer.log10())
+    } else {
+        (bound.low / scale, bound.high / scale, answer / scale)
+    };
+    let missed = if x < low {
+        low - x
+    } else if x > high {
+        x - high
+    } else {
+        0.0
+    };
+    (high - low, penalty * missed)
+}
+
 /// One player's results over the evening.
 #[derive(Serialize, Clone)]
 pub struct Score {
@@ -659,6 +718,17 @@ pub struct Score {
     /// counted over these.
     pub scored: usize,
     pub hits: usize,
+    /// How many of the scored ranges should have contained the answer, at
+    /// the level each question was asked at: 9 for ten questions at 90%.
+    pub expected: f64,
+    /// The level, when every scored question was asked at the same one.
+    pub level: Option<u8>,
+    pub calibration: Option<Calibration>,
+    /// The interval score, averaged over the scored questions, in its two
+    /// parts: what the width of the ranges cost, and what the misses
+    /// cost. Lower is better. `None` until a question has an answer.
+    pub width_cost: Option<f64>,
+    pub miss_cost: Option<f64>,
     /// Questions where their range was narrower than the room's median
     /// range. Widths cannot be compared between questions; this count
     /// can.
@@ -667,10 +737,52 @@ pub struct Score {
     pub changed_mind: usize,
 }
 
+impl Score {
+    /// The interval score: width and misses together.
+    pub fn cost(&self) -> Option<f64> {
+        Some(self.width_cost? + self.miss_cost?)
+    }
+}
+
+impl Round {
+    /// Whether this question is scored in powers of ten: when the answer
+    /// and every bound given are above zero. A zero or a negative number
+    /// anywhere in it puts the whole question on `cost_scale` instead, so
+    /// that everybody on one question is scored the same way.
+    fn cost_log(&self, players: &[Player]) -> bool {
+        self.answer.is_some_and(|a| a > 0.0)
+            && players
+                .iter()
+                .filter_map(|p| self.standing(&p.key))
+                .all(|b| b.low > 0.0)
+    }
+
+    /// What a question not scored in powers of ten is measured in: the
+    /// room's median first range, so that a question about millions and
+    /// one about single digits count alike. For a room that gave only
+    /// points, the size of the answer, and then one.
+    fn cost_scale(&self, players: &[Player]) -> f64 {
+        let width = self
+            .stats(players, Pass::First)
+            .or_else(|| self.standing_stats(players))
+            .map_or(0.0, |stats| stats.median_width);
+        let answer = self.answer.map_or(0.0, f64::abs);
+        if width > 0.0 {
+            width
+        } else if answer > 0.0 {
+            answer
+        } else {
+            1.0
+        }
+    }
+}
+
 impl Game {
-    /// Everyone's results, best hit rate first, with the narrower ranges
-    /// ahead on a tie. Answering "between nought and a billion" every time
-    /// gives a perfect hit rate and should not win.
+    /// Everyone's results, lowest interval score first: see
+    /// `interval_cost`. Answering "between nought and a billion" every
+    /// time holds every answer and still loses on width; ranges too
+    /// narrow to hold it lose on misses. Ties go to more hits. People
+    /// with nothing scored yet come after, by name.
     pub fn scores(&self) -> Vec<Score> {
         self.scores_over(|_| true)
     }
@@ -683,9 +795,22 @@ impl Game {
     }
 
     fn scores_over(&self, counted: impl Fn(&Round) -> bool) -> Vec<Score> {
-        let mut scores: Vec<Score> = self
-            .lobby
-            .players
+        let players = &self.lobby.players;
+        // Each question's numbers once, rather than once per player.
+        let rounds: Vec<(&Round, Option<Stats>, bool, f64)> = self
+            .rounds
+            .iter()
+            .filter(|round| counted(round))
+            .map(|round| {
+                (
+                    round,
+                    round.standing_stats(players),
+                    round.cost_log(players),
+                    round.cost_scale(players),
+                )
+            })
+            .collect();
+        let mut scores: Vec<Score> = players
             .iter()
             .map(|player| {
                 let mut score = Score {
@@ -693,10 +818,17 @@ impl Game {
                     answered: 0,
                     scored: 0,
                     hits: 0,
+                    expected: 0.0,
+                    level: None,
+                    calibration: None,
+                    width_cost: None,
+                    miss_cost: None,
                     tighter: 0,
                     changed_mind: 0,
                 };
-                for round in self.rounds.iter().filter(|round| counted(round)) {
+                let mut levels: Vec<u8> = Vec::new();
+                let (mut width, mut miss) = (0.0, 0.0);
+                for (round, stats, log, scale) in &rounds {
                     let Some(bound) = round.standing(&player.key) else {
                         continue;
                     };
@@ -706,8 +838,12 @@ impl Game {
                         if bound.contains(answer) {
                             score.hits += 1;
                         }
+                        levels.push(round.confidence);
+                        let (w, m) = interval_cost(bound, answer, round.confidence, *log, *scale);
+                        width += w;
+                        miss += m;
                     }
-                    if let Some(stats) = round.standing_stats(&self.lobby.players)
+                    if let Some(stats) = stats
                         && bound.width() < stats.median_width
                     {
                         score.tighter += 1;
@@ -719,22 +855,28 @@ impl Game {
                         score.changed_mind += 1;
                     }
                 }
+                if score.scored > 0 {
+                    let n = score.scored as f64;
+                    let fractions: Vec<f64> =
+                        levels.iter().map(|&l| f64::from(l) / 100.0).collect();
+                    score.width_cost = Some(width / n);
+                    score.miss_cost = Some(miss / n);
+                    score.expected = levels.iter().map(|&l| f64::from(l)).sum::<f64>() / 100.0;
+                    score.level = levels.iter().all(|&l| l == levels[0]).then_some(levels[0]);
+                    score.calibration = calibration(score.hits, &fractions);
+                }
                 score
             })
             .filter(|score| score.answered > 0)
             .collect();
-        let rate = |score: &Score| {
-            if score.scored == 0 {
-                -1.0
-            } else {
-                score.hits as f64 / score.scored as f64
-            }
-        };
-        scores.sort_by(|a, b| {
-            rate(b)
-                .total_cmp(&rate(a))
-                .then(b.tighter.cmp(&a.tighter))
-                .then(a.name.cmp(&b.name))
+        scores.sort_by(|a, b| match (a.cost(), b.cost()) {
+            (Some(x), Some(y)) => x
+                .total_cmp(&y)
+                .then(b.hits.cmp(&a.hits))
+                .then(a.name.cmp(&b.name)),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => a.name.cmp(&b.name),
         });
         scores
     }
@@ -1133,9 +1275,142 @@ mod tests {
             (2, 1, 1)
         );
         assert_eq!(scores[0].tighter, 0, "20 is the median width, not under it");
-        assert_eq!(scores[1].name, "Bo", "same hit rate, so by name");
-        assert_eq!(scores[2].name, "Cy", "a miss comes last");
-        assert_eq!(scores[2].tighter, 1);
+        // A zero in the room puts the question on a straight scale, in
+        // units of the median first width, 20. At 90% a miss costs 20
+        // times the distance.
+        assert_eq!(scores[0].cost(), Some(1.0), "20 wide, held it");
+        assert_eq!(scores[1].name, "Cy");
+        assert_eq!(
+            (scores[1].width_cost, scores[1].miss_cost),
+            (Some(0.5), Some(40.0)),
+            "10 wide, missed by 40"
+        );
+        assert_eq!(scores[1].tighter, 1);
+        assert_eq!(
+            scores[2].name, "Bo",
+            "a range of 0 to 1000 holds it and still loses"
+        );
+        assert_eq!(scores[2].cost(), Some(50.0));
+    }
+
+    /// Ten questions at 90%. One player answers a thousand times either
+    /// side of the answer and holds all ten. The other answers a factor
+    /// of two either side, holds nine, and misses one by a factor of two.
+    #[test]
+    fn calibrated_ranges_beat_ranges_wide_enough_to_hold_everything() {
+        let (mut game, keys) = room();
+        for i in 0..10 {
+            let answer = 10f64.powi(i % 5 + 1);
+            game.ask("How many?", "", Some(answer), 1000).unwrap();
+            game.bound(&keys[0], answer / 1000.0, answer * 1000.0, 1001)
+                .unwrap();
+            let (low, high) = if i == 0 {
+                (answer * 2.0, answer * 8.0)
+            } else {
+                (answer / 2.0, answer * 2.0)
+            };
+            game.bound(&keys[1], low, high, 1001).unwrap();
+            game.reveal().unwrap();
+        }
+        let scores = game.scores();
+        let (wide, tight) = (&scores[1], &scores[0]);
+        assert_eq!((tight.name.as_str(), tight.hits), ("Bo", 9));
+        assert_eq!((wide.name.as_str(), wide.hits), ("Ada", 10));
+        let near = |a: Option<f64>, b: f64| (a.unwrap() - b).abs() < 1e-9;
+        assert!(near(wide.width_cost, 6.0), "six powers of ten wide");
+        assert!(near(wide.miss_cost, 0.0));
+        let two = 2f64.log10();
+        assert!(near(
+            tight.width_cost,
+            (9.0 * 2.0 * two + 4f64.log10()) / 10.0
+        ));
+        assert!(
+            near(tight.miss_cost, 20.0 * two / 10.0),
+            "one miss by a factor of two"
+        );
+        assert_eq!(
+            tight.calibration,
+            Some(Calibration::Right),
+            "9 of 10 at 90%"
+        );
+        assert_eq!(
+            wide.calibration,
+            Some(Calibration::Right),
+            "10 of 10 is within one"
+        );
+        assert_eq!((tight.expected, tight.level), (9.0, Some(90)));
+    }
+
+    #[test]
+    fn a_hit_count_well_short_of_the_level_is_too_narrow() {
+        let (mut game, keys) = room();
+        for i in 0..10 {
+            game.ask("How many?", "", Some(100.0), 1000).unwrap();
+            let (low, high) = if i < 7 { (90.0, 110.0) } else { (1.0, 2.0) };
+            game.bound(&keys[0], low, high, 1001).unwrap();
+            let (low, high) = if i < 3 { (90.0, 110.0) } else { (1.0, 2.0) };
+            game.bound(&keys[1], low, high, 1001).unwrap();
+            game.bound(&keys[2], 50.0, 200.0, 1001).unwrap();
+            game.reveal().unwrap();
+        }
+        let scores = game.scores();
+        let of = |name: &str| scores.iter().find(|s| s.name == name).unwrap();
+        assert_eq!(of("Ada").hits, 7);
+        assert_eq!(
+            of("Ada").calibration,
+            Some(Calibration::Narrow),
+            "7 of 10 at 90%"
+        );
+        assert_eq!(of("Bo").calibration, Some(Calibration::Narrow));
+        assert_eq!(of("Cy").calibration, Some(Calibration::Right));
+
+        game.set_confidence(50).unwrap();
+        for _ in 0..4 {
+            game.ask("How many?", "", Some(100.0), 1000).unwrap();
+            game.bound(&keys[3], 50.0, 200.0, 1001).unwrap();
+            game.reveal().unwrap();
+        }
+        let di = game.scores().into_iter().find(|s| s.name == "Di").unwrap();
+        assert_eq!((di.hits, di.expected), (4, 2.0));
+        assert_eq!(di.calibration, Some(Calibration::Wide), "4 of 4 at 50%");
+    }
+
+    #[test]
+    fn too_few_questions_are_not_called_about_right() {
+        let (mut game, keys) = room();
+        game.ask("How many?", "", Some(100.0), 1000).unwrap();
+        game.bound(&keys[0], 90.0, 110.0, 1001).unwrap();
+        game.reveal().unwrap();
+        assert_eq!(game.scores()[0].calibration, None);
+    }
+
+    #[test]
+    fn a_question_with_a_negative_answer_is_scored_on_the_rooms_scale() {
+        let (mut game, keys) = room();
+        game.ask("Coldest day?", "°C", Some(-30.0), 1000).unwrap();
+        game.bound(&keys[0], -40.0, -20.0, 1001).unwrap(); // width 20, holds it
+        game.bound(&keys[1], -10.0, 0.0, 1001).unwrap(); // width 10, misses by 20
+        game.reveal().unwrap();
+        let scores = game.scores();
+        // The median first width is 15.
+        assert_eq!(scores[0].name, "Ada");
+        let near = |a: Option<f64>, b: f64| (a.unwrap() - b).abs() < 1e-9;
+        assert!(near(scores[0].cost(), 20.0 / 15.0));
+        assert!(near(scores[1].width_cost, 10.0 / 15.0));
+        assert!(near(scores[1].miss_cost, 20.0 * 20.0 / 15.0));
+    }
+
+    #[test]
+    fn the_board_puts_people_with_nothing_scored_last() {
+        let (mut game, keys) = room();
+        game.ask("One", "", None, 1000).unwrap();
+        game.bound(&keys[0], 1.0, 2.0, 1001).unwrap();
+        game.ask("Two", "", Some(5.0), 2000).unwrap();
+        game.bound(&keys[1], 1.0, 1000.0, 2001).unwrap();
+        let scores = game.scores();
+        assert_eq!(scores[0].name, "Bo");
+        assert_eq!(scores[1].name, "Ada");
+        assert_eq!(scores[1].cost(), None);
     }
 
     #[test]

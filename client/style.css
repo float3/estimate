@@ -166,3 +166,18 @@ h3 {
   opacity: 0.45;
   cursor: not-allowed;
 }
+
+/* The board's score and hit columns: the number, and under it what it is
+ * made of. */
+td.cost small {
+  display: block;
+  font-size: 0.8em;
+  color: var(--body);
+  white-space: nowrap;
+}
+
+/* The sentence a player's evening comes down to. */
+.calibration {
+  font-weight: 700;
+  margin: 4px 0;
+}
