@@ -573,6 +573,16 @@ function player(key: string): void {
     const mine = sent(view);
     const low = value("low");
     const high = value("high");
+    // The typed numbers read back with separators and the unit, so that a
+    // zero too many or too few shows before it is sent.
+    text(
+      "preview",
+      low === null && high === null
+        ? ""
+        : `That is ${low === null ? "…" : num(Math.min(low, high ?? low))} – ${
+            high === null ? "…" : withUnit(Math.max(high, low ?? high))
+          }`,
+    );
     const same = mine !== null && low === mine.low && high === mine.high;
     send.classList.toggle("done", same);
     send.disabled = same;
