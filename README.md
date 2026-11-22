@@ -1,3 +1,6 @@
+> [!IMPORTANT]
+> This repository is archived. estimate now lives in [float3/rooms](https://github.com/float3/rooms/tree/main/estimate), where it is developed and served from the hall.
+
 # estimate
 
 [![CI](https://github.com/float3/estimate/actions/workflows/ci.yml/badge.svg)](https://github.com/float3/estimate/actions/workflows/ci.yml)
